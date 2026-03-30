@@ -203,6 +203,8 @@ func (d *aiChatDockable) aiAssistantSystemPrompt() string {
 	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS Fourth Edition character builder assistant.
 Use the current character sheet state and the player's concept to make recommendations.
 Always validate choices, compute point costs, and keep Tech Level constraints in mind.
+Only select abilities, skills, quirks, disadvantages, and equipment from the loaded library items.
+Do not create custom entries or invent names that are not present in the library.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, ask the user to open or create a character sheet before proceeding.
 
@@ -240,7 +242,11 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 	}
 	builder.WriteString(fmt.Sprintf("Current character concept: %s\n", concept))
 	builder.WriteString(fmt.Sprintf("Tech Level: %s\n", tl))
-	builder.WriteString(fmt.Sprintf("Total CP: %s, Unspent CP: %s\n", entity.TotalPoints.String(), entity.UnspentPoints().String()))
+	unspent := entity.UnspentPoints()
+	builder.WriteString(fmt.Sprintf("Total CP: %s, Unspent CP: %s\n", entity.TotalPoints.String(), unspent.String()))
+	if unspent < 0 {
+		builder.WriteString(fmt.Sprintf("Overspent by: %s\n", (-unspent).String()))
+	}
 
 	attributes := entity.Attributes.List()
 	if len(attributes) > 0 {
@@ -316,6 +322,7 @@ func (d *aiChatDockable) activeOrOpenSheet() *Sheet {
 func (d *aiChatDockable) sheetOrCreateNew() *Sheet {
 	sheet := d.activeOrOpenSheet()
 	if sheet != nil {
+		ActivateDockable(sheet)
 		return sheet
 	}
 	entity := gurps.NewEntity()
@@ -588,33 +595,53 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) error {
 
 	if len(plan.Advantages) > 0 || len(plan.Disadvantages) > 0 || len(plan.Quirks) > 0 {
 		traits := entity.Traits
+		var err error
 		for _, action := range plan.Advantages {
-			traits = append(traits, d.makeTrait(entity, action))
+			traits, err = d.addOrUpdateTrait(entity, traits, action)
+			if err != nil {
+				return err
+			}
 		}
 		for _, action := range plan.Disadvantages {
-			traits = append(traits, d.makeTrait(entity, action))
+			traits, err = d.addOrUpdateTrait(entity, traits, action)
+			if err != nil {
+				return err
+			}
 		}
 		for _, action := range plan.Quirks {
-			traits = append(traits, d.makeTrait(entity, action))
+			traits, err = d.addOrUpdateTrait(entity, traits, action)
+			if err != nil {
+				return err
+			}
 		}
 		entity.SetTraitList(traits)
 	}
 
 	if len(plan.Skills) > 0 {
 		skills := entity.Skills
+		var err error
 		for _, action := range plan.Skills {
-			skills = append(skills, d.makeSkill(entity, action))
+			skills, err = d.addOrUpdateSkill(entity, skills, action)
+			if err != nil {
+				return err
+			}
 		}
 		entity.SetSkillList(skills)
 	}
 
 	if len(plan.Equipment) > 0 {
 		equipment := entity.CarriedEquipment
+		var err error
 		for _, action := range plan.Equipment {
-			equipment = append(equipment, d.makeEquipment(entity, action))
+			equipment, err = d.addOrUpdateEquipment(entity, equipment, action)
+			if err != nil {
+				return err
+			}
 		}
 		entity.SetCarriedEquipmentList(equipment)
 	}
+
+	ActivateDockable(sheet)
 
 	if plan.SpendAllCP {
 		// If the assistant requested to spend all CP, leave the sheet in a modified state.
@@ -658,7 +685,7 @@ func applyAttributeAction(entity *gurps.Entity, action aiAttributeAction) error 
 	return nil
 }
 
-func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, error) {
+func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, gurps.LibraryFile, error) {
 	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.TraitsExt) {
 		for _, ref := range set.List {
 			traits, err := gurps.NewTraitsFromFile(ref.FileSystem, ref.FilePath)
@@ -668,15 +695,15 @@ func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, erro
 			for _, trait := range traits {
 				if strings.EqualFold(trait.Name, name) {
 					trait.SetDataOwner(nil)
-					return trait, nil
+					return trait, gurps.LibraryFile{Library: set.Name, Path: ref.FilePath}, nil
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, gurps.LibraryFile{}, nil
 }
 
-func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, error) {
+func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, gurps.LibraryFile, error) {
 	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.SkillsExt) {
 		for _, ref := range set.List {
 			skills, err := gurps.NewSkillsFromFile(ref.FileSystem, ref.FilePath)
@@ -686,15 +713,15 @@ func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, erro
 			for _, skill := range skills {
 				if strings.EqualFold(skill.Name, name) {
 					skill.SetDataOwner(nil)
-					return skill, nil
+					return skill, gurps.LibraryFile{Library: set.Name, Path: ref.FilePath}, nil
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, gurps.LibraryFile{}, nil
 }
 
-func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipment, error) {
+func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipment, gurps.LibraryFile, error) {
 	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.EquipmentExt) {
 		for _, ref := range set.List {
 			equipment, err := gurps.NewEquipmentFromFile(ref.FileSystem, ref.FilePath)
@@ -704,72 +731,138 @@ func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipme
 			for _, eqp := range equipment {
 				if strings.EqualFold(eqp.Name, name) {
 					eqp.SetDataOwner(nil)
-					return eqp, nil
+					return eqp, gurps.LibraryFile{Library: set.Name, Path: ref.FilePath}, nil
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, gurps.LibraryFile{}, nil
 }
 
-func (d *aiChatDockable) makeTrait(entity *gurps.Entity, action aiNamedAction) *gurps.Trait {
-	trait, _ := d.findLibraryTraitByName(action.Name)
-	if trait != nil {
-		trait.SetDataOwner(entity)
+func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.Trait, action aiNamedAction) ([]*gurps.Trait, error) {
+	if strings.TrimSpace(action.Name) == "" {
+		return traits, fmt.Errorf("trait action is missing a name")
+	}
+	if existing := d.findExistingTrait(entity, action.Name); existing != nil {
 		if action.Points != "" {
 			if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
-				trait.BasePoints = points
+				existing.BasePoints = points
 			}
 		}
-		return trait
+		return traits, nil
 	}
-	newTrait := gurps.NewTrait(entity, nil, false)
-	newTrait.Name = action.Name
+	libraryTrait, libFile, err := d.findLibraryTraitByName(action.Name)
+	if err != nil {
+		return traits, err
+	}
+	if libraryTrait == nil {
+		return traits, fmt.Errorf("trait %q not found in library; use a library entry instead of a custom trait", action.Name)
+	}
+	cloned := libraryTrait.Clone(libFile, entity, nil, false)
 	if action.Points != "" {
 		if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
-			newTrait.BasePoints = points
+			cloned.BasePoints = points
 		}
 	}
-	return newTrait
+	return append(traits, cloned), nil
 }
 
-func (d *aiChatDockable) makeSkill(entity *gurps.Entity, action aiSkillAction) *gurps.Skill {
-	skill, _ := d.findLibrarySkillByName(action.Name)
-	if skill != nil {
-		skill.SetDataOwner(entity)
+func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.Skill, action aiSkillAction) ([]*gurps.Skill, error) {
+	if strings.TrimSpace(action.Name) == "" {
+		return skills, fmt.Errorf("skill action is missing a name")
+	}
+	if existing := d.findExistingSkill(entity, action.Name); existing != nil {
 		if action.Points != "" {
 			if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
-				skill.Points = points
+				existing.Points = points
 			}
 		}
-		return skill
+		if action.Level != "" {
+			if level, err := fxp.FromString(strings.TrimSpace(action.Level)); err == nil {
+				existing.LevelData.Level = level
+			}
+		}
+		return skills, nil
 	}
-	newSkill := gurps.NewSkill(entity, nil, false)
-	newSkill.Name = action.Name
+	librarySkill, libFile, err := d.findLibrarySkillByName(action.Name)
+	if err != nil {
+		return skills, err
+	}
+	if librarySkill == nil {
+		return skills, fmt.Errorf("skill %q not found in library; use a library entry instead of a custom skill", action.Name)
+	}
+	cloned := librarySkill.Clone(libFile, entity, nil, false)
 	if action.Points != "" {
 		if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
-			newSkill.Points = points
+			cloned.Points = points
 		}
 	}
-	return newSkill
+	if action.Level != "" {
+		if level, err := fxp.FromString(strings.TrimSpace(action.Level)); err == nil {
+			cloned.LevelData.Level = level
+		}
+	}
+	return append(skills, cloned), nil
 }
 
-func (d *aiChatDockable) makeEquipment(entity *gurps.Entity, action aiNamedAction) *gurps.Equipment {
-	equipment, _ := d.findLibraryEquipmentByName(action.Name)
-	if equipment != nil {
-		equipment.SetDataOwner(entity)
+func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []*gurps.Equipment, action aiNamedAction) ([]*gurps.Equipment, error) {
+	if strings.TrimSpace(action.Name) == "" {
+		return equipment, fmt.Errorf("equipment action is missing a name")
+	}
+	if existing := d.findExistingEquipment(entity, action.Name); existing != nil {
 		if action.Quantity != 0 {
-			equipment.Quantity = fxp.FromInteger(action.Quantity)
+			existing.Quantity = fxp.FromInteger(action.Quantity)
 		}
-		return equipment
+		return equipment, nil
 	}
-	newEquipment := gurps.NewEquipment(entity, nil, false)
-	newEquipment.Name = action.Name
-	newEquipment.Quantity = fxp.One
-	if action.Quantity > 0 {
-		newEquipment.Quantity = fxp.FromInteger(action.Quantity)
+	libraryEquipment, libFile, err := d.findLibraryEquipmentByName(action.Name)
+	if err != nil {
+		return equipment, err
 	}
-	return newEquipment
+	if libraryEquipment == nil {
+		return equipment, fmt.Errorf("equipment %q not found in library; use a library entry instead of a custom item", action.Name)
+	}
+	cloned := libraryEquipment.Clone(libFile, entity, nil, false)
+	if action.Quantity != 0 {
+		cloned.Quantity = fxp.FromInteger(action.Quantity)
+	}
+	return append(equipment, cloned), nil
+}
+
+func (d *aiChatDockable) findExistingTrait(entity *gurps.Entity, name string) *gurps.Trait {
+	name = strings.TrimSpace(name)
+	for _, trait := range entity.Traits {
+		if trait.Container() {
+			continue
+		}
+		if strings.EqualFold(trait.Name, name) {
+			return trait
+		}
+	}
+	return nil
+}
+
+func (d *aiChatDockable) findExistingSkill(entity *gurps.Entity, name string) *gurps.Skill {
+	name = strings.TrimSpace(name)
+	for _, skill := range entity.Skills {
+		if skill.Container() {
+			continue
+		}
+		if strings.EqualFold(skill.Name, name) {
+			return skill
+		}
+	}
+	return nil
+}
+
+func (d *aiChatDockable) findExistingEquipment(entity *gurps.Entity, name string) *gurps.Equipment {
+	name = strings.TrimSpace(name)
+	for _, eqp := range entity.CarriedEquipment {
+		if strings.EqualFold(eqp.Name, name) {
+			return eqp
+		}
+	}
+	return nil
 }
 
 func (d *aiChatDockable) queryGemini(prompt string) {
