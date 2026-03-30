@@ -15,10 +15,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
+	"github.com/richardwilkes/gcs/v5/model/fxp"
 	"github.com/richardwilkes/gcs/v5/model/gurps"
 	"github.com/richardwilkes/gcs/v5/model/gurps/enums/dgroup"
 	"github.com/richardwilkes/gcs/v5/svg"
@@ -194,6 +197,280 @@ func (d *aiChatDockable) addMessage(author, message string) *unison.Panel {
 	return wrapper
 }
 
+func (d *aiChatDockable) aiAssistantSystemPrompt() string {
+	summary := d.currentCharacterSummary()
+	libraryReference := d.availableLibrarySummary()
+	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS Fourth Edition character builder assistant.
+Use the current character sheet state and the player's concept to make recommendations.
+Always validate choices, compute point costs, and keep Tech Level constraints in mind.
+If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
+If no sheet is active, ask the user to open or create a character sheet before proceeding.
+
+%s
+
+%s
+
+When asked to apply changes, include a top-level JSON object with keys such as:
+- attributes: [{"id":"ST","value":"12"}]
+- advantages: [{"name":"Combat Reflexes","points":"15"}]
+- disadvantages: [{"name":"Code of Honor","points":"-10"}]
+- quirks: [{"name":"Must make an entrance","points":"-1"}]
+- skills: [{"name":"Brawling","points":"4"}]
+- equipment: [{"name":"Leather Armor","quantity":1}]
+- spend_all_cp: true
+
+If you include JSON, put the JSON object as the first top-level object in the response.
+When responding, keep answers concise, factual, and directly tied to GURPS 4e rules.`, summary, libraryReference))
+}
+
+func (d *aiChatDockable) currentCharacterSummary() string {
+	sheet := d.activeOrOpenSheet()
+	if sheet == nil || sheet.entity == nil {
+		return "No active GURPS sheet is open. If you ask to build a character, I will create a new sheet and apply the changes there."
+	}
+	entity := sheet.entity
+	var builder strings.Builder
+	concept := strings.TrimSpace(entity.Profile.Title)
+	if concept == "" {
+		concept = "(not specified)"
+	}
+	tl := strings.TrimSpace(entity.Profile.TechLevel)
+	if tl == "" {
+		tl = "(not specified)"
+	}
+	builder.WriteString(fmt.Sprintf("Current character concept: %s\n", concept))
+	builder.WriteString(fmt.Sprintf("Tech Level: %s\n", tl))
+	builder.WriteString(fmt.Sprintf("Total CP: %s, Unspent CP: %s\n", entity.TotalPoints.String(), entity.UnspentPoints().String()))
+
+	attributes := entity.Attributes.List()
+	if len(attributes) > 0 {
+		builder.WriteString("Attributes: ")
+		for i, attr := range attributes {
+			if i > 0 {
+				builder.WriteString(", ")
+			}
+			name := attr.AttrID
+			if def := attr.AttributeDef(); def != nil {
+				name = def.Name
+			}
+			builder.WriteString(fmt.Sprintf("%s %s", name, attr.Current().String()))
+		}
+		builder.WriteString("\n")
+	}
+
+	advantages := make([]string, 0)
+	disadvantages := make([]string, 0)
+	for _, trait := range entity.Traits {
+		if trait.Disabled || trait.Container() {
+			continue
+		}
+		points := trait.AdjustedPoints()
+		if points > 0 {
+			advantages = append(advantages, fmt.Sprintf("%s (+%s)", trait.Name, points.String()))
+		} else if points < 0 {
+			disadvantages = append(disadvantages, fmt.Sprintf("%s (%s)", trait.Name, points.String()))
+		}
+	}
+	if len(advantages) > 0 {
+		builder.WriteString("Advantages: ")
+		builder.WriteString(strings.Join(advantages, ", "))
+		builder.WriteString("\n")
+	}
+	if len(disadvantages) > 0 {
+		builder.WriteString("Disadvantages: ")
+		builder.WriteString(strings.Join(disadvantages, ", "))
+		builder.WriteString("\n")
+	}
+
+	skills := make([]string, 0, len(entity.Skills))
+	for _, skill := range entity.Skills {
+		if skill.Container() {
+			continue
+		}
+		name := skill.Name
+		if name == "" {
+			name = "Unnamed Skill"
+		}
+		skills = append(skills, fmt.Sprintf("%s (%s pts)", name, skill.Points.String()))
+	}
+	if len(skills) > 0 {
+		builder.WriteString("Skills: ")
+		builder.WriteString(strings.Join(skills, ", "))
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func (d *aiChatDockable) activeOrOpenSheet() *Sheet {
+	if sheet := ActiveSheet(); sheet != nil {
+		return sheet
+	}
+	openSheets := OpenSheets(nil)
+	if len(openSheets) > 0 {
+		return openSheets[0]
+	}
+	return nil
+}
+
+func (d *aiChatDockable) sheetOrCreateNew() *Sheet {
+	sheet := d.activeOrOpenSheet()
+	if sheet != nil {
+		return sheet
+	}
+	entity := gurps.NewEntity()
+	sheet = NewSheet(i18n.Text("Untitled")+gurps.SheetExt, entity)
+	DisplayNewDockable(sheet)
+	ActivateDockable(sheet)
+	d.addMessage("AI", i18n.Text("No active sheet was open, so a new character sheet has been created for AI updates."))
+	return sheet
+}
+
+func (d *aiChatDockable) availableLibrarySummary() string {
+	libraries := gurps.GlobalSettings().Libraries()
+	if libraries == nil {
+		return "Library availability is unknown."
+	}
+	skills, advantages, disadvantages, quirks, equipment := d.collectAvailableLibraryItemNames(libraries)
+	if len(skills) == 0 && len(advantages) == 0 && len(disadvantages) == 0 && len(quirks) == 0 && len(equipment) == 0 {
+		return "No library items were available to summarize."
+	}
+	var builder strings.Builder
+	builder.WriteString("Library reference:\n")
+	if len(skills) > 0 {
+		builder.WriteString(fmt.Sprintf("Skills available: %d names. Examples: %s\n", len(skills), strings.Join(firstN(skills, 6), ", ")))
+	}
+	if len(advantages) > 0 {
+		builder.WriteString(fmt.Sprintf("Advantages available: %d names. Examples: %s\n", len(advantages), strings.Join(firstN(advantages, 6), ", ")))
+	}
+	if len(disadvantages) > 0 {
+		builder.WriteString(fmt.Sprintf("Disadvantages available: %d names. Examples: %s\n", len(disadvantages), strings.Join(firstN(disadvantages, 6), ", ")))
+	}
+	if len(quirks) > 0 {
+		builder.WriteString(fmt.Sprintf("Quirks available: %d names. Examples: %s\n", len(quirks), strings.Join(firstN(quirks, 6), ", ")))
+	}
+	if len(equipment) > 0 {
+		builder.WriteString(fmt.Sprintf("Equipment available: %d names. Examples: %s\n", len(equipment), strings.Join(firstN(equipment, 6), ", ")))
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func firstN(list []string, n int) []string {
+	if len(list) <= n {
+		return list
+	}
+	return list[:n]
+}
+
+func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Libraries) (skills, advantages, disadvantages, quirks, equipment []string) {
+	skillsSet := make(map[string]struct{})
+	advantagesSet := make(map[string]struct{})
+	disadvantagesSet := make(map[string]struct{})
+	quirksSet := make(map[string]struct{})
+	equipmentSet := make(map[string]struct{})
+
+	loadItems := func(ext string, loader func(fs.FS, string) ([]any, error), categorize func(any)) {
+		for _, set := range gurps.ScanForNamedFileSets(nil, "", false, libraries, ext) {
+			for _, ref := range set.List {
+				items, err := loader(ref.FileSystem, ref.FilePath)
+				if err != nil {
+					continue
+				}
+				for _, item := range items {
+					categorize(item)
+				}
+			}
+		}
+	}
+
+	loadItems(gurps.SkillsExt, func(fsys fs.FS, filePath string) ([]any, error) {
+		rows, err := gurps.NewSkillsFromFile(fsys, filePath)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]any, len(rows))
+		for i, r := range rows {
+			result[i] = r
+		}
+		return result, nil
+	}, func(item any) {
+		skill := item.(*gurps.Skill)
+		if skill.Name != "" && !skill.Container() {
+			skillsSet[skill.Name] = struct{}{}
+		}
+	})
+
+	loadItems(gurps.TraitsExt, func(fsys fs.FS, filePath string) ([]any, error) {
+		rows, err := gurps.NewTraitsFromFile(fsys, filePath)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]any, len(rows))
+		for i, r := range rows {
+			result[i] = r
+		}
+		return result, nil
+	}, func(item any) {
+		trait := item.(*gurps.Trait)
+		if trait.Name == "" || trait.Container() {
+			return
+		}
+		points := trait.AdjustedPoints()
+		name := trait.Name
+		if points > 0 {
+			advantagesSet[name] = struct{}{}
+			return
+		}
+		if points < 0 {
+			if strings.Contains(strings.ToLower(name), "quirk") || strings.Contains(strings.ToLower(strings.Join(trait.Tags, " ")), "quirk") {
+				quirksSet[name] = struct{}{}
+				return
+			}
+			disadvantagesSet[name] = struct{}{}
+		}
+	})
+
+	loadItems(gurps.EquipmentExt, func(fsys fs.FS, filePath string) ([]any, error) {
+		rows, err := gurps.NewEquipmentFromFile(fsys, filePath)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]any, len(rows))
+		for i, r := range rows {
+			result[i] = r
+		}
+		return result, nil
+	}, func(item any) {
+		eqp := item.(*gurps.Equipment)
+		if eqp.Name != "" {
+			equipmentSet[eqp.Name] = struct{}{}
+		}
+	})
+
+	for name := range skillsSet {
+		skills = append(skills, name)
+	}
+	for name := range advantagesSet {
+		advantages = append(advantages, name)
+	}
+	for name := range disadvantagesSet {
+		disadvantages = append(disadvantages, name)
+	}
+	for name := range quirksSet {
+		quirks = append(quirks, name)
+	}
+	for name := range equipmentSet {
+		equipment = append(equipment, name)
+	}
+
+	sort.Strings(skills)
+	sort.Strings(advantages)
+	sort.Strings(disadvantages)
+	sort.Strings(quirks)
+	sort.Strings(equipment)
+	return
+}
+
 func (d *aiChatDockable) setThinking(thinking bool) {
 	d.isThinking = thinking
 	d.submitButton.SetEnabled(!thinking)
@@ -204,6 +481,295 @@ func (d *aiChatDockable) setThinking(thinking bool) {
 		d.thinkingMessage = nil
 		d.historyPanel.MarkForLayoutAndRedraw()
 	}
+}
+
+func (d *aiChatDockable) handleAIResponse(responseStr string) {
+	d.addMessage("AI", responseStr)
+	plan, ok := d.parseAIActionPlan(responseStr)
+	if !ok {
+		return
+	}
+	if err := d.applyAIActionPlan(plan); err != nil {
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI plan could not be applied: %v"), err))
+		return
+	}
+	d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+}
+
+type aiActionPlan struct {
+	Attributes    []aiAttributeAction `json:"attributes,omitempty"`
+	Advantages    []aiNamedAction     `json:"advantages,omitempty"`
+	Disadvantages []aiNamedAction     `json:"disadvantages,omitempty"`
+	Quirks        []aiNamedAction     `json:"quirks,omitempty"`
+	Skills        []aiSkillAction     `json:"skills,omitempty"`
+	Equipment     []aiNamedAction     `json:"equipment,omitempty"`
+	SpendAllCP    bool                `json:"spend_all_cp,omitempty"`
+}
+
+type aiAttributeAction struct {
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+type aiNamedAction struct {
+	Name     string `json:"name"`
+	Points   string `json:"points,omitempty"`
+	Quantity int    `json:"quantity,omitempty"`
+}
+
+type aiSkillAction struct {
+	Name   string `json:"name"`
+	Points string `json:"points,omitempty"`
+	Level  string `json:"level,omitempty"`
+}
+
+func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
+	payload := extractJSONPayload(text)
+	if payload == "" {
+		return aiActionPlan{}, false
+	}
+	var plan aiActionPlan
+	if err := json.Unmarshal([]byte(payload), &plan); err != nil {
+		return aiActionPlan{}, false
+	}
+	return plan, true
+}
+
+func extractJSONPayload(text string) string {
+	start := strings.Index(text, "{")
+	if start == -1 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escape = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) error {
+	sheet := d.sheetOrCreateNew()
+	if sheet == nil || sheet.entity == nil {
+		return fmt.Errorf("no active sheet to apply changes to")
+	}
+	entity := sheet.entity
+
+	for _, attr := range plan.Attributes {
+		if err := applyAttributeAction(entity, attr); err != nil {
+			return err
+		}
+	}
+
+	if len(plan.Advantages) > 0 || len(plan.Disadvantages) > 0 || len(plan.Quirks) > 0 {
+		traits := entity.Traits
+		for _, action := range plan.Advantages {
+			traits = append(traits, d.makeTrait(entity, action))
+		}
+		for _, action := range plan.Disadvantages {
+			traits = append(traits, d.makeTrait(entity, action))
+		}
+		for _, action := range plan.Quirks {
+			traits = append(traits, d.makeTrait(entity, action))
+		}
+		entity.SetTraitList(traits)
+	}
+
+	if len(plan.Skills) > 0 {
+		skills := entity.Skills
+		for _, action := range plan.Skills {
+			skills = append(skills, d.makeSkill(entity, action))
+		}
+		entity.SetSkillList(skills)
+	}
+
+	if len(plan.Equipment) > 0 {
+		equipment := entity.CarriedEquipment
+		for _, action := range plan.Equipment {
+			equipment = append(equipment, d.makeEquipment(entity, action))
+		}
+		entity.SetCarriedEquipmentList(equipment)
+	}
+
+	if plan.SpendAllCP {
+		// If the assistant requested to spend all CP, leave the sheet in a modified state.
+		// The assistant itself should have chosen appropriate trait/skill/equipment entries.
+	}
+
+	sheet.Rebuild(true)
+	MarkModified(sheet)
+	return nil
+}
+
+func applyAttributeAction(entity *gurps.Entity, action aiAttributeAction) error {
+	name := strings.TrimSpace(action.Name)
+	id := strings.TrimSpace(action.ID)
+	valueText := strings.TrimSpace(action.Value)
+	if name == "" && id == "" {
+		return fmt.Errorf("attribute action is missing id or name")
+	}
+	if valueText == "" {
+		return fmt.Errorf("attribute action is missing a value")
+	}
+	value, err := fxp.FromString(valueText)
+	if err != nil {
+		return fmt.Errorf("invalid attribute value %q: %w", valueText, err)
+	}
+	var attr *gurps.Attribute
+	for _, candidate := range entity.Attributes.List() {
+		if id != "" && strings.EqualFold(candidate.AttrID, id) {
+			attr = candidate
+			break
+		}
+		if name != "" && candidate.NameMatches(name) {
+			attr = candidate
+			break
+		}
+	}
+	if attr == nil {
+		return fmt.Errorf("unknown attribute %q", name+id)
+	}
+	attr.SetMaximum(value)
+	return nil
+}
+
+func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, error) {
+	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.TraitsExt) {
+		for _, ref := range set.List {
+			traits, err := gurps.NewTraitsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, trait := range traits {
+				if strings.EqualFold(trait.Name, name) {
+					trait.SetDataOwner(nil)
+					return trait, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, error) {
+	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.SkillsExt) {
+		for _, ref := range set.List {
+			skills, err := gurps.NewSkillsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, skill := range skills {
+				if strings.EqualFold(skill.Name, name) {
+					skill.SetDataOwner(nil)
+					return skill, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipment, error) {
+	for _, set := range gurps.ScanForNamedFileSets(nil, "", false, gurps.GlobalSettings().Libraries(), gurps.EquipmentExt) {
+		for _, ref := range set.List {
+			equipment, err := gurps.NewEquipmentFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, eqp := range equipment {
+				if strings.EqualFold(eqp.Name, name) {
+					eqp.SetDataOwner(nil)
+					return eqp, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (d *aiChatDockable) makeTrait(entity *gurps.Entity, action aiNamedAction) *gurps.Trait {
+	trait, _ := d.findLibraryTraitByName(action.Name)
+	if trait != nil {
+		trait.SetDataOwner(entity)
+		if action.Points != "" {
+			if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
+				trait.BasePoints = points
+			}
+		}
+		return trait
+	}
+	newTrait := gurps.NewTrait(entity, nil, false)
+	newTrait.Name = action.Name
+	if action.Points != "" {
+		if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
+			newTrait.BasePoints = points
+		}
+	}
+	return newTrait
+}
+
+func (d *aiChatDockable) makeSkill(entity *gurps.Entity, action aiSkillAction) *gurps.Skill {
+	skill, _ := d.findLibrarySkillByName(action.Name)
+	if skill != nil {
+		skill.SetDataOwner(entity)
+		if action.Points != "" {
+			if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
+				skill.Points = points
+			}
+		}
+		return skill
+	}
+	newSkill := gurps.NewSkill(entity, nil, false)
+	newSkill.Name = action.Name
+	if action.Points != "" {
+		if points, err := fxp.FromString(strings.TrimSpace(action.Points)); err == nil {
+			newSkill.Points = points
+		}
+	}
+	return newSkill
+}
+
+func (d *aiChatDockable) makeEquipment(entity *gurps.Entity, action aiNamedAction) *gurps.Equipment {
+	equipment, _ := d.findLibraryEquipmentByName(action.Name)
+	if equipment != nil {
+		equipment.SetDataOwner(entity)
+		if action.Quantity != 0 {
+			equipment.Quantity = fxp.FromInteger(action.Quantity)
+		}
+		return equipment
+	}
+	newEquipment := gurps.NewEquipment(entity, nil, false)
+	newEquipment.Name = action.Name
+	newEquipment.Quantity = fxp.One
+	if action.Quantity > 0 {
+		newEquipment.Quantity = fxp.FromInteger(action.Quantity)
+	}
+	return newEquipment
 }
 
 func (d *aiChatDockable) queryGemini(prompt string) {
@@ -224,7 +790,8 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		defer client.Close()
 		model := client.GenerativeModel("gemini-pro")
 		chat := model.StartChat()
-		chat.History = d.chatHistory
+		systemPrompt := d.aiAssistantSystemPrompt()
+		chat.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt)}}}, d.chatHistory...)
 		resp, err := chat.SendMessage(ctx, genai.Text(prompt))
 		if err != nil {
 			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error generating content: %v"), err)) })
@@ -241,7 +808,7 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 			}
 		}
 		responseStr := responseText.String()
-		unison.InvokeTask(func() { d.addMessage("AI", responseStr) })
+		unison.InvokeTask(func() { d.handleAIResponse(responseStr) })
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "model"})
 	}()
@@ -295,6 +862,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 		}
 
 		var messages []message
+		messages = append(messages, message{Role: "system", Content: d.aiAssistantSystemPrompt()})
 		for _, entry := range d.chatHistory {
 			contentText := marshalContent(entry)
 			if contentText == "" {
@@ -400,7 +968,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 			unison.InvokeTask(func() { d.addMessage("AI", i18n.Text("Local AI server returned no text.")) })
 			return
 		}
-		unison.InvokeTask(func() { d.addMessage("AI", responseStr) })
+		unison.InvokeTask(func() { d.handleAIResponse(responseStr) })
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "assistant"})
 	}()
