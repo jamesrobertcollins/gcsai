@@ -94,6 +94,7 @@ type Settings struct {
 	PDFs               map[string]*PDFInfo        `json:"pdfs,omitzero"`
 	LootGenMinValue    fxp.Int                    `json:"loot_gen_min_value"`
 	LootGenMaxValue    fxp.Int                    `json:"loot_gen_max_value"`
+	AI                 AISettings 				  `json:"ai,omitempty"`
 }
 
 // IDer defines the methods required of objects that have an ID.

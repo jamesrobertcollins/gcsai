@@ -143,6 +143,8 @@ var (
 )
 
 func registerActions() {
+	registerAIAction()
+
 	// Standard actions that may be assigned a key binding
 	gurps.RegisterKeyBinding("cut", unison.CutAction())
 	gurps.RegisterKeyBinding("copy", unison.CopyAction())

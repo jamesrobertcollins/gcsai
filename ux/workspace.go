@@ -95,24 +95,32 @@ func InitWorkspace(wnd *unison.Window) {
 
 func finishInit() {
 	Workspace.Window.ResizedCallback = nil
-	if gurps.GlobalSettings().General.RestoreWorkspaceOnStart {
-		xos.SafeCall(restoreDockState, func(err error) {
+	global := gurps.GlobalSettings()
+	restored := false
+	if global.General.RestoreWorkspaceOnStart {
+		xos.SafeCall(func() {
+			restored = restoreDockState()
+		}, func(err error) {
+			restored = false
 			slog.Warn("Unable to restore workspace state", "error", err)
 		})
-	} else {
+	}
+	if !global.General.RestoreWorkspaceOnStart || !restored {
 		Workspace.TopDock.RootDockLayout().SetDividerPosition(gurps.DefaultNavigatorDividerPosition)
+		Workspace.TopDock.MarkForLayoutAndRedraw()
+		Workspace.Window.MarkForRedraw()
 	}
 	Workspace.Navigator.InitialFocus()
 	Workspace.ErrorHandler = func(msg string, err error) { unison.ErrorDialogWithError(msg, err) }
 }
 
-func restoreDockState() {
+func restoreDockState() bool {
 	global := gurps.GlobalSettings()
 	m := make(map[string]unison.Dockable)
 	extractDockKeys(m, global.TopDockState)
 	extractDockKeys(m, global.DocDockState)
 	if len(m) == 0 {
-		return
+		return false
 	}
 	files := make([]string, 0, len(m))
 	for k := range m {
@@ -148,6 +156,7 @@ func restoreDockState() {
 			return nil
 		})
 	}
+	return true
 }
 
 func extractDockKeys(m map[string]unison.Dockable, dockState *unison.DockState) {

@@ -1,0 +1,3 @@
+[workspace] after SetContent topdock children 0
+[workspace] navigator parent dock container true
+[workspace] after docking children 2

@@ -42,7 +42,9 @@ func Start(files []string) {
 			} else {
 				unison.DefaultTitleIcons = []*unison.Image{appIcon}
 			}
-			CheckForAppUpdates()
+			// Update checks are deferred/disabled here to avoid showing a floating update dialog
+			// before the main workspace is fully initialized.
+			// CheckForAppUpdates()
 			wnd, err := unison.NewWindow(xos.AppName)
 			xos.ExitIfErr(err)
 			SetupMenuBar(wnd)

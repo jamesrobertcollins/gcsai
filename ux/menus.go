@@ -120,6 +120,7 @@ const (
 	Scale500ItemID
 	Scale600ItemID
 	DockUnDockItemID
+	ToolsMenuID
 
 	FirstNonContainerMarker // Keep this block grouped together
 	NewCarriedEquipmentItemID
@@ -177,7 +178,8 @@ func SetupMenuBar(wnd *unison.Window) {
 		s.setupFileMenu(bar)
 		s.setupEditMenu(bar)
 		f := bar.Factory()
-		i := s.insertMenu(bar, bar.Item(unison.EditMenuID).Index()+1, s.createItemMenu(f))
+		i := s.insertMenu(bar, bar.Item(unison.EditMenuID).Index()+1, s.createToolsMenu(f))
+		i = s.insertMenu(bar, i, s.createItemMenu(f))
 		i = s.insertMenu(bar, i, s.createSettingsMenu(f))
 		s.insertMenu(bar, i, s.createViewMenu(f))
 		s.setupWindowMenu(bar)
@@ -272,6 +274,12 @@ func (s menuBarScope) setupEditMenu(bar unison.Menu) {
 	i = s.insertMenuSeparator(m, i)
 	i = s.insertMenuItem(m, i, syncWithSourceAction.NewMenuItem(f))
 	s.insertMenuItem(m, i, clearSourceAction.NewMenuItem(f))
+}
+
+func (s menuBarScope) createToolsMenu(f unison.MenuFactory) unison.Menu {
+	m := f.NewMenu(ToolsMenuID, i18n.Text("Tools"), nil)
+	m.InsertItem(-1, aiChatAction.NewMenuItem(f))
+	return m
 }
 
 func (s menuBarScope) createItemMenu(f unison.MenuFactory) unison.Menu {

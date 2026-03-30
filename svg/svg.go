@@ -40,6 +40,10 @@ var (
 	bookmarkData string
 	Bookmark     = unison.MustSVGFromContentString(bookmarkData)
 
+	//go:embed bot.svg
+	botData string
+	Bot     = unison.MustSVGFromContentString(botData)
+
 	//go:embed calculator.svg
 	calculatorData string
 	Calculator     = unison.MustSVGFromContentString(calculatorData)

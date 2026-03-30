@@ -10,9 +10,11 @@
 			"request": "launch",
 			"mode": "auto",
 			"program": ".",
-			"args": [
-				"-console"
-			]
+			"console": "internalConsole",
+			"env": {
+                "CGO_ENABLED": "1",
+                "GOEXPERIMENT": "jsonv2"
+            }
 		}
 	]
 }
