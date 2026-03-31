@@ -211,12 +211,15 @@ Always validate choices, compute point costs, and keep Tech Level constraints in
 Evaluate available library options against the character concept, game-world setting, and Tech Level.
 IMPORTANT: You MUST choose advantages, disadvantages, quirks, and skills ONLY from the complete lists provided below.
 Do NOT suggest any items not in these lists. Do NOT invent custom ability names.
+For attributes, use only attribute ids that already exist on the current character sheet summary below. Do NOT invent attribute ids such as BX.
 When returning actions for advantages, disadvantages, quirks, skills, and equipment: ALWAYS include the exact id from the list entry.
 Use only the id value shown after "id=" in the list. Never use a library/source label (for example, never use "GURPS" as an id).
 Prefer existing library equipment first; only create a custom item if no suitable library equipment exists.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, ask the user to open or create a character sheet before proceeding.
 Some traits and skills require a subject or specialization to be filled in. These are shown in the library list with a "requires:" tag listing placeholder names (e.g. "requires: subject"). When adding such a trait or skill, you MUST supply a "notes" field containing the appropriate value. For example, Code of Honor (@subject@) with subject "Pirate's" would be: {"id":"<id>","name":"Code of Honor","notes":"Pirate's","points":"-10"}.
+If a list entry does NOT show a "requires:" tag, do NOT invent a new parenthetical variant for it. Use the exact listed name or exact id only.
+If multiple concrete variants are listed, pick the exact matching variant from the list instead of synthesizing a new one.
 
 %s
 
@@ -272,10 +275,10 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 				builder.WriteString(", ")
 			}
 			name := attr.AttrID
-			if def := attr.AttributeDef(); def != nil {
+			if def := attr.AttributeDef(); def != nil && strings.TrimSpace(def.Name) != "" {
 				name = def.Name
 			}
-			builder.WriteString(fmt.Sprintf("%s %s", name, attr.Current().String()))
+			builder.WriteString(fmt.Sprintf("%s (%s) %s", attr.AttrID, name, attr.Current().String()))
 		}
 		builder.WriteString("\n")
 	}
@@ -1041,7 +1044,8 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) 
 
 	for _, attr := range plan.Attributes {
 		if err := applyAttributeAction(entity, attr); err != nil {
-			return nil, err
+			warnings = append(warnings, fmt.Sprintf("Warning: could not apply attribute action: %v", err))
+			continue
 		}
 	}
 
@@ -1420,13 +1424,10 @@ func normalizeAISelectionID(raw string) string {
 	}
 	if idx := strings.IndexAny(value, "=:"); idx > 0 && strings.EqualFold(strings.TrimSpace(value[:idx]), "id") {
 		value = strings.TrimSpace(value[idx+1:])
-		if fields := strings.Fields(value); len(fields) > 0 {
-			value = fields[0]
-		}
 	}
-	// Strip wrapping punctuation but do NOT split on spaces —
-	// multi-word IDs like "Code of Honor" must stay intact.
-	return strings.Trim(value, "\"'<>[]{}()")
+	// Strip wrapping punctuation but preserve meaningful parentheses in names,
+	// e.g. "Code of Honor (Deadite Hunter)".
+	return strings.Trim(value, "\"'<>[]{}")
 }
 
 func canonicalizeSkillLookupToken(token string) string {
