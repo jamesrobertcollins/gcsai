@@ -214,6 +214,10 @@ Do NOT suggest any items not in these lists. Do NOT invent custom ability names.
 For attributes, use only attribute ids that already exist on the current character sheet summary below. Do NOT invent attribute ids such as BX.
 When returning actions for advantages, disadvantages, quirks, skills, and equipment: ALWAYS include the exact id from the list entry.
 Use only the id value shown after "id=" in the list. Never use a library/source label (for example, never use "GURPS" as an id).
+For advantages, disadvantages, quirks, skills, and equipment, copy the exact listed name verbatim into the JSON "name" field.
+If the list shows a specialization in parentheses, copy it exactly. For example, use "Driving (Automobile)", not "Driving (Car)" and not "Driving (Car) - Chevrolet Impala".
+Do not append explanations, descriptions, or item context to JSON names.
+For quirks, put roleplay flavor in "notes" and keep "name" equal to the exact listed quirk name only. Example: "name":"Must make an entrance", "notes":"with Groucho".
 Prefer existing library equipment first; only create a custom item if no suitable library equipment exists.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, ask the user to open or create a character sheet before proceeding.
@@ -1097,15 +1101,21 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) 
 	if len(plan.Skills) > 0 {
 		skills := entity.Skills
 		for _, action := range plan.Skills {
-			var warning string
-			var err error
-			skills, warning, err = d.addOrUpdateSkill(entity, skills, action)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("Warning: could not apply skill action: %v", err))
-				continue
+			expandedActions, splitWarning := splitCombinedAISkillActions(action)
+			if splitWarning != "" {
+				warnings = append(warnings, splitWarning)
 			}
-			if warning != "" {
-				warnings = append(warnings, warning)
+			for _, expanded := range expandedActions {
+				var warning string
+				var err error
+				skills, warning, err = d.addOrUpdateSkill(entity, skills, expanded)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("Warning: could not apply skill action: %v", err))
+					continue
+				}
+				if warning != "" {
+					warnings = append(warnings, warning)
+				}
 			}
 		}
 		entity.SetSkillList(skills)
@@ -1140,9 +1150,55 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) 
 	return warnings, nil
 }
 
+func normalizeAIAttributeIdentifier(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	key := strings.ToLower(trimmed)
+	replacer := strings.NewReplacer(" ", "", "-", "", "_", "", "/", "", "'", "", "\"", "")
+	key = replacer.Replace(key)
+	aliases := map[string]string{
+		"st":            "ST",
+		"strength":      "ST",
+		"dx":            "DX",
+		"dexterity":     "DX",
+		"iq":            "IQ",
+		"intelligence":  "IQ",
+		"ht":            "HT",
+		"health":        "HT",
+		"will":          "Will",
+		"willpower":     "Will",
+		"wp":            "Will",
+		"per":           "Per",
+		"perception":    "Per",
+		"perc":          "Per",
+		"hp":            "HP",
+		"hitpoint":      "HP",
+		"hitpoints":     "HP",
+		"fp":            "FP",
+		"fatiguepoint":  "FP",
+		"fatiguepoints": "FP",
+		"bs":            "Basic Speed",
+		"basicspeed":    "Basic Speed",
+		"speed":         "Basic Speed",
+		"bx":            "Basic Speed",
+		"bm":            "Basic Move",
+		"basicmove":     "Basic Move",
+		"move":          "Basic Move",
+		"bl":            "Basic Lift",
+		"basiclift":     "Basic Lift",
+		"lift":          "Basic Lift",
+	}
+	if canonical, ok := aliases[key]; ok {
+		return canonical
+	}
+	return trimmed
+}
+
 func applyAttributeAction(entity *gurps.Entity, action aiAttributeAction) error {
-	name := strings.TrimSpace(action.Name.String())
-	id := strings.TrimSpace(action.ID.String())
+	name := normalizeAIAttributeIdentifier(action.Name.String())
+	id := normalizeAIAttributeIdentifier(action.ID.String())
 	valueText := strings.TrimSpace(action.Value.String())
 	if name == "" && id == "" {
 		return fmt.Errorf("attribute action is missing id or name")
@@ -1156,11 +1212,11 @@ func applyAttributeAction(entity *gurps.Entity, action aiAttributeAction) error 
 	}
 	var attr *gurps.Attribute
 	for _, candidate := range entity.Attributes.List() {
-		if id != "" && strings.EqualFold(candidate.AttrID, id) {
+		if id != "" && (strings.EqualFold(candidate.AttrID, id) || candidate.NameMatches(id)) {
 			attr = candidate
 			break
 		}
-		if name != "" && candidate.NameMatches(name) {
+		if name != "" && (strings.EqualFold(candidate.AttrID, name) || candidate.NameMatches(name)) {
 			attr = candidate
 			break
 		}
@@ -1430,6 +1486,120 @@ func normalizeAISelectionID(raw string) string {
 	return strings.Trim(value, "\"'<>[]{}")
 }
 
+func normalizeAISkillName(raw string) string {
+	value := strings.Trim(strings.TrimSpace(raw), "\"'")
+	if value == "" {
+		return ""
+	}
+	if idx := strings.Index(value, "|"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	if idx := strings.Index(value, " - "); idx > 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	return value
+}
+
+func normalizeAINamedItemName(raw string) string {
+	value := strings.Trim(strings.TrimSpace(raw), "\"'")
+	if value == "" {
+		return ""
+	}
+	if idx := strings.Index(value, "|"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	if idx := strings.Index(value, " - "); idx > 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+	return value
+}
+
+func traitAliasName(name string) string {
+	key := normalizeLookupText(name)
+	switch key {
+	case "combateffective", "combateffectivemilitary":
+		return "Combat Reflexes"
+	default:
+		return ""
+	}
+}
+
+func traitNameLookupCandidates(raw string) []string {
+	trimmed := normalizeAINamedItemName(raw)
+	if trimmed == "" {
+		return nil
+	}
+	seen := make(map[string]struct{}, 6)
+	add := func(value string, out *[]string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		*out = append(*out, value)
+	}
+	results := make([]string, 0, 6)
+	add(trimmed, &results)
+	base, _ := splitSkillNameAndSpecialization(trimmed)
+	add(base, &results)
+	lower := strings.ToLower(trimmed)
+	if idx := strings.Index(lower, " with "); idx > 0 {
+		add(trimmed[:idx], &results)
+	}
+	if idx := strings.Index(trimmed, ":"); idx > 0 {
+		add(trimmed[:idx], &results)
+	}
+	if alias := traitAliasName(trimmed); alias != "" {
+		add(alias, &results)
+	}
+	return results
+}
+
+func splitCombinedAISkillActions(action aiSkillAction) ([]aiSkillAction, string) {
+	name := normalizeAISkillName(action.Name.String())
+	if name == "" {
+		name = normalizeAISkillName(action.ID.String())
+	}
+	base, spec := splitSkillNameAndSpecialization(name)
+	if base == "" || spec == "" || !strings.Contains(spec, ",") {
+		return []aiSkillAction{action}, ""
+	}
+	parts := strings.Split(spec, ",")
+	cleanParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		cleanParts = append(cleanParts, part)
+	}
+	if len(cleanParts) < 2 {
+		return []aiSkillAction{action}, ""
+	}
+	pointsText := strings.TrimSpace(action.Points.String())
+	pointsPerSkill := pointsText
+	if pointsText != "" {
+		if total, err := strconv.Atoi(pointsText); err == nil && total%len(cleanParts) == 0 {
+			pointsPerSkill = strconv.Itoa(total / len(cleanParts))
+		}
+	}
+	result := make([]aiSkillAction, 0, len(cleanParts))
+	for _, part := range cleanParts {
+		expanded := action
+		expanded.Name = aiFlexibleString(skillDisplayName(base, part))
+		expanded.ID = ""
+		if pointsPerSkill != "" {
+			expanded.Points = aiFlexibleString(pointsPerSkill)
+		}
+		result = append(result, expanded)
+	}
+	return result, fmt.Sprintf("Warning: combined skill %q was split into separate skills: %s.", name, strings.Join(cleanParts, ", "))
+}
+
 func canonicalizeSkillLookupToken(token string) string {
 	switch token {
 	case "car", "cars", "auto", "autos", "automobiles":
@@ -1635,12 +1805,13 @@ func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipme
 }
 
 func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.Trait, action aiNamedAction) ([]*gurps.Trait, string, error) {
-	name := strings.TrimSpace(action.Name.String())
+	rawName := action.Name.String()
+	name := normalizeAINamedItemName(rawName)
 	idStr := normalizeAISelectionID(action.ID.String())
 	useTIDLookup := idStr != "" && tid.IsValid(tid.TID(idStr))
 	if name == "" && idStr != "" && !useTIDLookup {
 		// Some models place the trait name in "id" instead of "name".
-		name = idStr
+		name = normalizeAINamedItemName(idStr)
 	}
 	if name == "" && !useTIDLookup {
 		return traits, "", fmt.Errorf("trait action is missing a name or valid id")
@@ -1681,20 +1852,32 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 		}
 	}
 
-	// Fall back to name lookup if ID lookup didn't find anything
-	if libraryTrait == nil && name != "" {
-		libraryTrait, libFile, err = d.findLibraryTraitByName(name)
-		if err != nil {
-			return traits, "", err
+	// Fall back to name lookup if ID lookup didn't find anything.
+	if libraryTrait == nil {
+		for _, candidate := range traitNameLookupCandidates(name) {
+			libraryTrait, libFile, err = d.findLibraryTraitByName(candidate)
+			if err != nil {
+				return traits, "", err
+			}
+			if libraryTrait != nil {
+				name = candidate
+				break
+			}
 		}
 	}
 
 	// Also try the id string itself as a library name — the AI often puts the
 	// library name in the "id" field rather than the actual TID.
 	if libraryTrait == nil && idStr != "" && !strings.EqualFold(idStr, name) {
-		libraryTrait, libFile, err = d.findLibraryTraitByName(idStr)
-		if err != nil {
-			return traits, "", err
+		for _, candidate := range traitNameLookupCandidates(idStr) {
+			libraryTrait, libFile, err = d.findLibraryTraitByName(candidate)
+			if err != nil {
+				return traits, "", err
+			}
+			if libraryTrait != nil {
+				name = candidate
+				break
+			}
 		}
 	}
 
@@ -1702,7 +1885,7 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 		return traits, fmt.Sprintf("%sWarning: trait %q was not found in the library and was skipped. Advantages, disadvantages and quirks must come from library entries.", warningPrefix, name), nil
 	}
 	cloned := libraryTrait.Clone(libFile, entity, nil, false)
-	applyNameablesToClonedTrait(cloned, name, action.Notes.String())
+	applyNameablesToClonedTrait(cloned, rawName, action.Notes.String())
 	if pointsText := strings.TrimSpace(action.Points.String()); pointsText != "" {
 		if points, err := fxp.FromString(pointsText); err == nil {
 			cloned.BasePoints = points
@@ -1712,12 +1895,12 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 }
 
 func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.Skill, action aiSkillAction) ([]*gurps.Skill, string, error) {
-	name := strings.TrimSpace(action.Name.String())
+	name := normalizeAISkillName(action.Name.String())
 	idStr := normalizeAISelectionID(action.ID.String())
 	useTIDLookup := idStr != "" && tid.IsValid(tid.TID(idStr))
 	if name == "" && idStr != "" && !useTIDLookup {
 		// Some models place the skill name in "id" instead of "name".
-		name = idStr
+		name = normalizeAISkillName(idStr)
 	}
 	if name == "" && !useTIDLookup {
 		return skills, "", fmt.Errorf("skill action is missing a name or valid id")
@@ -1743,7 +1926,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
-			return skills, warningPrefix, nil
+			return skills, "", nil
 		}
 	}
 	if name != "" {
@@ -1758,7 +1941,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
-			return skills, warningPrefix, nil
+			return skills, "", nil
 		}
 	}
 	var librarySkill *gurps.Skill
@@ -1806,7 +1989,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 			cloned.LevelData.Level = level
 		}
 	}
-	return append(skills, cloned), warningPrefix, nil
+	return append(skills, cloned), "", nil
 }
 
 func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []*gurps.Equipment, action aiNamedAction) ([]*gurps.Equipment, string, error) {
