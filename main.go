@@ -98,6 +98,7 @@ func main() {
 			xos.ExitWithMsg(err.Error())
 		}
 	default:
+		ux.WriteAIDebugSkillDumpFile()
 		ux.Start(fileList) // Never returns
 	}
 	xos.Exit(0)
