@@ -216,6 +216,7 @@ Use only the id value shown after "id=" in the list. Never use a library/source 
 Prefer existing library equipment first; only create a custom item if no suitable library equipment exists.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, ask the user to open or create a character sheet before proceeding.
+Some traits and skills require a subject or specialization to be filled in. These are shown in the library list with a "requires:" tag listing placeholder names (e.g. "requires: subject"). When adding such a trait or skill, you MUST supply a "notes" field containing the appropriate value. For example, Code of Honor (@subject@) with subject "Pirate's" would be: {"id":"<id>","name":"Code of Honor","notes":"Pirate's","points":"-10"}.
 
 %s
 
@@ -226,7 +227,7 @@ When asked to apply changes, include a top-level JSON object showing character u
 - profile: {"name":"John Smith","gender":"M","age":"25","height":"5'10\"","weight":"180 lbs","hair":"brown","eyes":"blue","skin":"fair","handedness":"Right","title":"Adventurer","organization":"","religion":"","tech_level":"3"}
 - attributes: [{"id":"ST","value":"12"}]
 - advantages: [{"id":"<adv-id>","name":"Combat Reflexes","points":"15"}]
-- disadvantages: [{"id":"<disadv-id>","name":"Code of Honor","points":"-10"}]
+- disadvantages: [{"id":"<disadv-id>","name":"Code of Honor","notes":"Pirate's","points":"-10"}]
 - quirks: [{"id":"<quirk-id>","name":"Must make an entrance","points":"-1"}]
 - skills: [{"id":"<skill-id>","name":"Brawling","points":"4"}]
 - equipment: [{"id":"<equipment-id>","name":"Leather Armor","quantity":1}]
@@ -370,21 +371,33 @@ func (d *aiChatDockable) getCompleteAvailableLibraryItems() string {
 	if len(advantages) > 0 {
 		builder.WriteString("ADVANTAGES:\n")
 		for _, adv := range advantages {
-			builder.WriteString(fmt.Sprintf("  - id=%s | name=%s | %s\n", adv.ID, adv.Name, adv.SourcePath))
+			line := fmt.Sprintf("  - id=%s | name=%s | %s", adv.ID, adv.Name, adv.SourcePath)
+			if len(adv.Nameables) > 0 {
+				line += fmt.Sprintf(" | requires: %s", strings.Join(adv.Nameables, ", "))
+			}
+			builder.WriteString(line + "\n")
 		}
 		builder.WriteString("\n")
 	}
 	if len(disadvantages) > 0 {
 		builder.WriteString("DISADVANTAGES:\n")
 		for _, dis := range disadvantages {
-			builder.WriteString(fmt.Sprintf("  - id=%s | name=%s | %s\n", dis.ID, dis.Name, dis.SourcePath))
+			line := fmt.Sprintf("  - id=%s | name=%s | %s", dis.ID, dis.Name, dis.SourcePath)
+			if len(dis.Nameables) > 0 {
+				line += fmt.Sprintf(" | requires: %s", strings.Join(dis.Nameables, ", "))
+			}
+			builder.WriteString(line + "\n")
 		}
 		builder.WriteString("\n")
 	}
 	if len(quirks) > 0 {
 		builder.WriteString("QUIRKS:\n")
 		for _, quirk := range quirks {
-			builder.WriteString(fmt.Sprintf("  - id=%s | name=%s | %s\n", quirk.ID, quirk.Name, quirk.SourcePath))
+			line := fmt.Sprintf("  - id=%s | name=%s | %s", quirk.ID, quirk.Name, quirk.SourcePath)
+			if len(quirk.Nameables) > 0 {
+				line += fmt.Sprintf(" | requires: %s", strings.Join(quirk.Nameables, ", "))
+			}
+			builder.WriteString(line + "\n")
 		}
 		builder.WriteString("\n")
 	}
@@ -570,7 +583,15 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 		}
 		points := trait.AdjustedPoints()
 		name := trait.Name
-		ref := aiLibraryItemRef{ID: string(trait.TID), Name: name, SourcePath: sourcePath}
+		// Discover nameable keys (@key@ placeholders) in this trait.
+		nameableKeys := make(map[string]string)
+		trait.FillWithNameableKeys(nameableKeys, nil)
+		sortedKeys := make([]string, 0, len(nameableKeys))
+		for k := range nameableKeys {
+			sortedKeys = append(sortedKeys, k)
+		}
+		sort.Strings(sortedKeys)
+		ref := aiLibraryItemRef{ID: string(trait.TID), Name: name, SourcePath: sourcePath, Nameables: sortedKeys}
 		key := string(trait.TID)
 		if points > 0 {
 			advantagesMap[key] = ref
@@ -709,6 +730,7 @@ type aiLibraryItemRef struct {
 	Name           string
 	Specialization string
 	SourcePath     string
+	Nameables      []string // @key@ placeholders the AI must fill via "notes"
 }
 
 type aiFlexibleInt int
@@ -771,6 +793,7 @@ type aiAttributeAction struct {
 type aiNamedAction struct {
 	ID       aiFlexibleString `json:"id,omitempty"`
 	Name     aiFlexibleString `json:"name"`
+	Notes    aiFlexibleString `json:"notes,omitempty"`
 	Points   aiFlexibleString `json:"points,omitempty"`
 	Quantity aiFlexibleInt    `json:"quantity,omitempty"`
 }
@@ -778,6 +801,7 @@ type aiNamedAction struct {
 type aiSkillAction struct {
 	ID     aiFlexibleString `json:"id,omitempty"`
 	Name   aiFlexibleString `json:"name"`
+	Notes  aiFlexibleString `json:"notes,omitempty"`
 	Points aiFlexibleString `json:"points,omitempty"`
 	Value  aiFlexibleString `json:"value,omitempty"`
 	Level  aiFlexibleString `json:"level,omitempty"`
@@ -1228,6 +1252,7 @@ func (d *aiChatDockable) findLibraryTraitByID(idStr string) (*gurps.Trait, gurps
 }
 
 func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, gurps.LibraryFile, error) {
+	searchBase, _ := splitSkillNameAndSpecialization(name)
 	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.TraitsExt) {
 		for _, ref := range set.List {
 			traits, err := gurps.NewTraitsFromFile(ref.FileSystem, ref.FilePath)
@@ -1238,7 +1263,10 @@ func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, gurp
 				if trait.Container() {
 					continue
 				}
-				if strings.EqualFold(trait.Name, name) {
+				libBase := traitBaseNameForLookup(trait.Name)
+				if strings.EqualFold(trait.Name, name) ||
+					strings.EqualFold(libBase, name) ||
+					(searchBase != "" && (strings.EqualFold(trait.Name, searchBase) || strings.EqualFold(libBase, searchBase))) {
 					trait.SetDataOwner(nil)
 					return trait, libraryFileForSet(set.Name, ref.FilePath), nil
 				}
@@ -1250,6 +1278,7 @@ func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, gurp
 
 func (d *aiChatDockable) findLibrarySkillByID(idStr string) (*gurps.Skill, gurps.LibraryFile, error) {
 	idStr = normalizeAISelectionID(idStr)
+
 	if idStr == "" {
 		return nil, gurps.LibraryFile{}, nil
 	}
@@ -1306,6 +1335,81 @@ func normalizeLookupText(text string) string {
 	return strings.Join(filtered, "")
 }
 
+// extractParenthetical returns the content inside the last set of parentheses, or "".
+// e.g. "Code of Honor (Deadite-Only)" → "Deadite-Only"
+func extractParenthetical(text string) string {
+	text = strings.TrimSpace(text)
+	open := strings.LastIndex(text, "(")
+	close := strings.LastIndex(text, ")")
+	if open == -1 || close <= open {
+		return ""
+	}
+	return strings.TrimSpace(text[open+1 : close])
+}
+
+// applyNameablesToClonedTrait fills @key@ slots in a freshly cloned trait.
+// It looks for the replacement value in (in priority order):
+//  1. action.Notes field — explicit override
+//  2. Parenthetical in action.Name that differs from the library's raw name
+//     e.g. AI sends "Code of Honor (Deadite-Only)" → extracts "Deadite-Only"
+func applyNameablesToClonedTrait(cloned *gurps.Trait, aiName, aiNotes string) {
+	keys := make(map[string]string)
+	cloned.FillWithNameableKeys(keys, nil)
+	if len(keys) == 0 {
+		return
+	}
+	value := strings.TrimSpace(aiNotes)
+	if value == "" {
+		value = extractParenthetical(aiName)
+	}
+	if value == "" {
+		return
+	}
+	replacements := make(map[string]string, len(keys))
+	for k := range keys {
+		replacements[k] = value
+	}
+	cloned.Replacements = replacements
+}
+
+// applyNameablesToClonedSkill does the same for skills that have @key@ placeholders.
+func applyNameablesToClonedSkill(cloned *gurps.Skill, aiName, aiNotes string) {
+	keys := make(map[string]string)
+	cloned.FillWithNameableKeys(keys, nil)
+	if len(keys) == 0 {
+		return
+	}
+	value := strings.TrimSpace(aiNotes)
+	if value == "" {
+		value = extractParenthetical(aiName)
+	}
+	if value == "" {
+		return
+	}
+	replacements := make(map[string]string, len(keys))
+	for k := range keys {
+		replacements[k] = value
+	}
+	cloned.Replacements = replacements
+}
+
+// traitBaseNameForLookup strips nameable placeholder sections like "(@subject@)"
+// from a library trait name so "Code of Honor (@subject@)" matches "Code of Honor".
+func traitBaseNameForLookup(name string) string {
+	for {
+		open := strings.LastIndex(name, "(@")
+		if open == -1 {
+			break
+		}
+		closeIdx := strings.Index(name[open:], "@)")
+		if closeIdx == -1 {
+			break
+		}
+		name = strings.TrimSpace(name[:open] + name[open+closeIdx+2:])
+	}
+	return name
+}
+
 func normalizeAISelectionID(raw string) string {
 	value := strings.Trim(strings.TrimSpace(raw), "\"'")
 	if value == "" {
@@ -1320,11 +1424,9 @@ func normalizeAISelectionID(raw string) string {
 			value = fields[0]
 		}
 	}
-	value = strings.Trim(value, "\"'<>[]{}()")
-	if fields := strings.Fields(value); len(fields) > 0 {
-		value = fields[0]
-	}
-	return value
+	// Strip wrapping punctuation but do NOT split on spaces —
+	// multi-word IDs like "Code of Honor" must stay intact.
+	return strings.Trim(value, "\"'<>[]{}()")
 }
 
 func canonicalizeSkillLookupToken(token string) string {
@@ -1586,10 +1688,20 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 		}
 	}
 
+	// Also try the id string itself as a library name — the AI often puts the
+	// library name in the "id" field rather than the actual TID.
+	if libraryTrait == nil && idStr != "" && !strings.EqualFold(idStr, name) {
+		libraryTrait, libFile, err = d.findLibraryTraitByName(idStr)
+		if err != nil {
+			return traits, "", err
+		}
+	}
+
 	if libraryTrait == nil {
 		return traits, fmt.Sprintf("%sWarning: trait %q was not found in the library and was skipped. Advantages, disadvantages and quirks must come from library entries.", warningPrefix, name), nil
 	}
 	cloned := libraryTrait.Clone(libFile, entity, nil, false)
+	applyNameablesToClonedTrait(cloned, name, action.Notes.String())
 	if pointsText := strings.TrimSpace(action.Points.String()); pointsText != "" {
 		if points, err := fxp.FromString(pointsText); err == nil {
 			cloned.BasePoints = points
@@ -1668,11 +1780,21 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 		}
 	}
 
+	// Also try the id string itself as a skill name — the AI often puts the
+	// library name in the "id" field rather than the actual TID.
+	if librarySkill == nil && idStr != "" && !strings.EqualFold(idStr, name) && !useTIDLookup {
+		librarySkill, libFile, err = d.findLibrarySkillByName(idStr)
+		if err != nil {
+			return skills, "", err
+		}
+	}
+
 	if librarySkill == nil {
 		details := d.skillLookupDebugDetails(name, idStr)
 		return skills, fmt.Sprintf("%sWarning: skill %q was not found in the library and was skipped. Skills must be chosen from available database entries. %s", warningPrefix, name, details), nil
 	}
 	cloned := librarySkill.Clone(libFile, entity, nil, false)
+	applyNameablesToClonedSkill(cloned, name, action.Notes.String())
 	if pointsText != "" {
 		if points, err := fxp.FromString(pointsText); err == nil {
 			cloned.Points = points
