@@ -46,7 +46,8 @@ const (
 	aiChatBubbleRadius       = 12
 	aiChatBubbleMinWidth     = 240
 	aiChatBubbleMaxWidth     = 1200
-	aiChatInputSideMarginPct = 0.25
+	aiChatInputSideMarginPct = 0.10
+	aiChatInputBottomMargin  = 250
 	aiChatInputRadius        = 14
 	aiChatInputMinHeight     = 120
 	aiChatInputFixedWidth    = 1200
@@ -426,7 +427,7 @@ func (d *aiChatDockable) initContent() {
 	// Input area
 	inputArea := unison.NewPanel()
 	inputArea.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
-	inputArea.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: unison.StdVSpacing / 2, Bottom: unison.StdVSpacing * 2}))
+	inputArea.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: unison.StdVSpacing / 2, Bottom: unison.StdVSpacing*2 + aiChatInputBottomMargin}))
 	inputShell := unison.NewPanel()
 	inputShell.SetLayout(&unison.FlexLayout{Columns: 1})
 	inputShell.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 10, Left: 12, Bottom: 10, Right: 12}))
@@ -434,8 +435,9 @@ func (d *aiChatDockable) initContent() {
 		unison.DrawRoundedRectBase(gc, rect, geom.NewUniformSize(aiChatInputRadius), 0, aiChatInputBackground, aiChatInputEdge)
 	}
 	d.inputField = unison.NewMultiLineField()
+	unison.UninstallFocusBorders(d.inputField, d.inputField)
 	d.inputField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, MinSize: geom.Size{Height: aiChatInputMinHeight}})
-	d.inputField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
+	d.inputField.SetBorder(nil)
 	d.inputField.BackgroundInk = unison.White
 	d.inputField.EditableInk = unison.White
 	d.inputField.ErrorInk = unison.White
