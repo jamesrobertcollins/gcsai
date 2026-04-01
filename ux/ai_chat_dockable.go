@@ -46,6 +46,7 @@ const (
 	aiChatBubbleRadius       = 12
 	aiChatBubbleMinWidth     = 240
 	aiChatBubbleMaxWidth     = 1200
+	aiChatInputSideMarginPct = 0.25
 	aiChatInputRadius        = 14
 	aiChatInputMinHeight     = 120
 	aiChatInputFixedWidth    = 1200
@@ -65,8 +66,8 @@ var (
 	aiChatAIText                           = &unison.ThemeColor{Light: unison.Black, Dark: unison.White}
 	aiChatAIBubbleEdge                     = &unison.ThemeColor{Light: unison.RGB(120, 173, 122), Dark: unison.RGB(98, 168, 101)}
 	aiChatAuthorText                       = &unison.ThemeColor{Light: unison.Black.SetAlphaIntensity(0.65), Dark: unison.White.SetAlphaIntensity(0.78)}
-	aiChatInputBackground                  = &unison.ThemeColor{Light: unison.White, Dark: unison.RGB(44, 44, 44)}
-	aiChatInputEdge                        = unison.Transparent
+	aiChatInputBackground                  = &unison.ThemeColor{Light: unison.White, Dark: unison.White}
+	aiChatInputEdge                        = &unison.ThemeColor{Light: unison.White, Dark: unison.White}
 )
 
 type aiChatMessage struct {
@@ -98,6 +99,7 @@ type aiChatDockable struct {
 var (
 	_ unison.Layout = &aiChatMessageRowLayout{}
 	_ unison.Layout = &aiChatBubbleLayout{}
+	_ unison.Layout = &aiChatInputLayout{}
 )
 
 type aiChatMessageRowLayout struct {
@@ -122,6 +124,12 @@ type aiChatBubbleMeasurement struct {
 	prefSize     geom.Size
 	headerPref   geom.Size
 	contentPref  geom.Size
+}
+
+type aiChatInputLayout struct {
+	shell   *unison.Panel
+	button  *unison.Button
+	spacing float32
 }
 
 func (l *aiChatMessageRowLayout) LayoutSizes(_ *unison.Panel, hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
@@ -271,6 +279,69 @@ func (l *aiChatBubbleLayout) PerformLayout(target *unison.Panel) {
 	l.markdown.SetFrameRect(geom.NewRect(rect.X, y, 0, 0))
 }
 
+func (l *aiChatInputLayout) desiredShellWidth(availableWidth, shellMinWidth, buttonWidth float32) float32 {
+	if availableWidth <= 0 {
+		return max(float32(aiChatInputFixedWidth), shellMinWidth)
+	}
+	width := availableWidth * (1 - 2*aiChatInputSideMarginPct)
+	if width <= 0 {
+		width = availableWidth
+	}
+	maxCenteredWidth := availableWidth - 2*(buttonWidth+l.spacing)
+	if maxCenteredWidth > 0 {
+		width = min(width, maxCenteredWidth)
+	}
+	if width < shellMinWidth {
+		width = min(shellMinWidth, availableWidth)
+	}
+	return max(width, 1)
+}
+
+func (l *aiChatInputLayout) LayoutSizes(target *unison.Panel, hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
+	shellMin, shellPref, _ := l.shell.Sizes(geom.NewSize(float32(aiChatInputFixedWidth), 0))
+	buttonMin, buttonPref, _ := l.button.Sizes(geom.Size{})
+	minHeight := max(shellMin.Height, buttonMin.Height)
+	prefHeight := max(shellPref.Height, buttonPref.Height)
+	minWidth := shellMin.Width + l.spacing + buttonMin.Width
+	prefWidth := shellPref.Width + l.spacing + buttonPref.Width
+	if hint.Width > 0 {
+		desiredShellWidth := l.desiredShellWidth(hint.Width, shellMin.Width, buttonPref.Width)
+		_, shellPrefAtWidth, _ := l.shell.Sizes(geom.NewSize(desiredShellWidth, 0))
+		prefWidth = max(prefWidth, desiredShellWidth+l.spacing+buttonPref.Width)
+		prefHeight = max(prefHeight, shellPrefAtWidth.Height)
+	}
+	return geom.NewSize(minWidth, minHeight), geom.NewSize(prefWidth, prefHeight), geom.NewSize(unison.DefaultMaxSize, prefHeight)
+}
+
+func (l *aiChatInputLayout) PerformLayout(target *unison.Panel) {
+	rect := target.ContentRect(false)
+	if rect.Width <= 0 {
+		return
+	}
+	shellMin, _, _ := l.shell.Sizes(geom.NewSize(0, 0))
+	_, buttonPref, _ := l.button.Sizes(geom.Size{})
+	shellWidth := l.desiredShellWidth(rect.Width, shellMin.Width, buttonPref.Width)
+	_, shellPref, _ := l.shell.Sizes(geom.NewSize(shellWidth, 0))
+	rowHeight := max(shellPref.Height, buttonPref.Height)
+	groupWidth := shellWidth + l.spacing + buttonPref.Width
+	shellX := rect.X + (rect.Width-shellWidth)/2
+	buttonX := shellX + shellWidth + l.spacing
+	if groupWidth > rect.Width {
+		shellWidth = max(1, rect.Width-buttonPref.Width-l.spacing)
+		_, shellPref, _ = l.shell.Sizes(geom.NewSize(shellWidth, 0))
+		rowHeight = max(shellPref.Height, buttonPref.Height)
+		groupWidth = shellWidth + l.spacing + buttonPref.Width
+		shellX = rect.X + max(0, (rect.Width-groupWidth)/2)
+		buttonX = shellX + shellWidth + l.spacing
+	}
+	y := rect.Y
+	if rect.Height > rowHeight {
+		y += (rect.Height - rowHeight) / 2
+	}
+	l.shell.SetFrameRect(geom.NewRect(shellX, y, shellWidth, shellPref.Height))
+	l.button.SetFrameRect(geom.NewRect(buttonX, y+(rowHeight-buttonPref.Height)/2, buttonPref.Width, buttonPref.Height))
+}
+
 // ShowAIChat shows the AI Chat window.
 func ShowAIChat() {
 	if Activate(func(d unison.Dockable) bool {
@@ -354,32 +425,25 @@ func (d *aiChatDockable) initContent() {
 	d.AddChild(d.scroll)
 	// Input area
 	inputArea := unison.NewPanel()
-	inputArea.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: unison.StdHSpacing / 2})
 	inputArea.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
 	inputArea.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: unison.StdVSpacing / 2, Bottom: unison.StdVSpacing * 2}))
 	inputShell := unison.NewPanel()
 	inputShell.SetLayout(&unison.FlexLayout{Columns: 1})
-	inputShell.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Start, VAlign: align.Fill, MinSize: geom.Size{Width: aiChatInputFixedWidth}})
-	inputShell.SetSizer(func(hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
-		width := float32(aiChatInputFixedWidth)
-		height := float32(aiChatInputMinHeight + 16)
-		minSize = geom.NewSize(width, height)
-		prefSize = geom.NewSize(width, height)
-		maxSize = geom.NewSize(width, height)
-		return minSize, prefSize, maxSize
-	})
 	inputShell.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 10, Left: 12, Bottom: 10, Right: 12}))
 	inputShell.DrawCallback = func(gc *unison.Canvas, rect geom.Rect) {
 		unison.DrawRoundedRectBase(gc, rect, geom.NewUniformSize(aiChatInputRadius), 0, aiChatInputBackground, aiChatInputEdge)
 	}
 	d.inputField = unison.NewMultiLineField()
-	d.inputField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, MinSize: geom.Size{Width: aiChatInputFixedWidth - 24, Height: aiChatInputMinHeight}})
+	d.inputField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, MinSize: geom.Size{Height: aiChatInputMinHeight}})
 	d.inputField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
-	d.inputField.BackgroundInk = unison.Transparent
-	d.inputField.EditableInk = unison.Transparent
-	d.inputField.ErrorInk = unison.Transparent
-	d.inputField.SelectionInk = unison.White.SetAlphaIntensity(0.2)
-	d.inputField.OnSelectionInk = unison.ThemeOnSurface
+	d.inputField.BackgroundInk = unison.White
+	d.inputField.EditableInk = unison.White
+	d.inputField.ErrorInk = unison.White
+	d.inputField.OnBackgroundInk = unison.Black
+	d.inputField.OnEditableInk = unison.Black
+	d.inputField.OnErrorInk = unison.Black
+	d.inputField.SelectionInk = unison.Gray.SetAlphaIntensity(0.25)
+	d.inputField.OnSelectionInk = unison.Black
 	d.inputField.NoSelectAllOnFocus = true
 	d.inputField.KeyDownCallback = func(keyCode unison.KeyCode, mod unison.Modifiers, repeat bool) bool {
 		if keyCode == unison.KeyReturn || keyCode == unison.KeyNumPadEnter {
@@ -392,11 +456,16 @@ func (d *aiChatDockable) initContent() {
 		return d.inputField.DefaultKeyDown(keyCode, mod, repeat)
 	}
 	inputShell.AddChild(d.inputField)
-	inputArea.AddChild(inputShell)
 	d.submitButton = unison.NewButton()
 	d.submitButton.SetTitle(i18n.Text("Submit"))
 	d.submitButton.ClickCallback = d.submit
-	d.submitButton.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Start, VAlign: align.Middle})
+	d.submitButton.BackgroundInk = unison.White
+	d.submitButton.OnBackgroundInk = unison.Black
+	d.submitButton.SelectionInk = unison.Gray.SetAlphaIntensity(0.2)
+	d.submitButton.OnSelectionInk = unison.Black
+	d.submitButton.EdgeInk = aiChatInputEdge
+	inputArea.SetLayout(&aiChatInputLayout{shell: inputShell, button: d.submitButton, spacing: unison.StdHSpacing / 2})
+	inputArea.AddChild(inputShell)
 	inputArea.AddChild(d.submitButton)
 	d.AddChild(inputArea)
 }
