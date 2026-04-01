@@ -13,15 +13,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/generative-ai-go/genai"
@@ -39,14 +42,46 @@ import (
 )
 
 const (
-	aiChatDockKey = "ai.chat"
+	aiChatDockKey            = "ai.chat"
+	aiChatBubbleRadius       = 12
+	aiChatBubbleMinWidth     = 240
+	aiChatBubbleMaxWidth     = 1200
+	aiChatInputRadius        = 14
+	aiChatInputMinHeight     = 120
+	aiChatInputFixedWidth    = 1200
+	aiChatPDFPageWidth       = 612
+	aiChatPDFPageHeight      = 792
+	aiChatPDFHorizontalInset = 54
+	aiChatPDFVerticalInset   = 54
 )
 
 var (
-	_ unison.Dockable  = &aiChatDockable{}
-	_ KeyedDockable    = &aiChatDockable{}
-	_ unison.TabCloser = &aiChatDockable{}
+	_                     unison.Dockable  = &aiChatDockable{}
+	_                     KeyedDockable    = &aiChatDockable{}
+	_                     unison.TabCloser = &aiChatDockable{}
+	aiChatHumanBubble                      = &unison.ThemeColor{Light: unison.White, Dark: unison.White}
+	aiChatHumanText                        = unison.ThemeOnSurface
+	aiChatAIBubble                         = &unison.ThemeColor{Light: unison.RGB(213, 240, 214), Dark: unison.RGB(62, 111, 64)}
+	aiChatAIText                           = &unison.ThemeColor{Light: unison.Black, Dark: unison.White}
+	aiChatAIBubbleEdge                     = &unison.ThemeColor{Light: unison.RGB(120, 173, 122), Dark: unison.RGB(98, 168, 101)}
+	aiChatAuthorText                       = &unison.ThemeColor{Light: unison.Black.SetAlphaIntensity(0.65), Dark: unison.White.SetAlphaIntensity(0.78)}
+	aiChatInputBackground                  = &unison.ThemeColor{Light: unison.White, Dark: unison.RGB(44, 44, 44)}
+	aiChatInputEdge                        = unison.Transparent
 )
+
+type aiChatMessage struct {
+	Author    string
+	Text      string
+	Timestamp time.Time
+}
+
+type aiChatPDFExporter struct {
+	lines        []*unison.Text
+	pageSize     geom.Size
+	linesPerPage int
+	topInset     float32
+	leftInset    float32
+}
 
 type aiChatDockable struct {
 	unison.Panel
@@ -55,8 +90,185 @@ type aiChatDockable struct {
 	inputField      *unison.Field
 	submitButton    *unison.Button
 	chatHistory     []*genai.Content
+	chatMessages    []aiChatMessage
 	isThinking      bool
 	thinkingMessage *unison.Panel
+}
+
+var (
+	_ unison.Layout = &aiChatMessageRowLayout{}
+	_ unison.Layout = &aiChatBubbleLayout{}
+)
+
+type aiChatMessageRowLayout struct {
+	bubble     *unison.Panel
+	alignRight bool
+}
+
+type aiChatBubbleLayout struct {
+	dockable *aiChatDockable
+	message  string
+	isHuman  bool
+	header   *unison.Panel
+	markdown *unison.Markdown
+	field    *unison.Field
+	spacing  float32
+}
+
+type aiChatBubbleMeasurement struct {
+	maxWidth     float32
+	contentWidth float32
+	minSize      geom.Size
+	prefSize     geom.Size
+	headerPref   geom.Size
+	contentPref  geom.Size
+}
+
+func (l *aiChatMessageRowLayout) LayoutSizes(_ *unison.Panel, hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
+	measureHint := hint
+	if measureHint.Width <= 0 {
+		measureHint.Width = float32(aiChatBubbleMinWidth)
+	}
+	bubbleMin, bubblePref, _ := l.bubble.Sizes(measureHint)
+	compactMinWidth := min(float32(aiChatBubbleMinWidth), bubbleMin.Width)
+	compactPrefWidth := min(float32(aiChatBubbleMinWidth), bubblePref.Width)
+	minSize = geom.NewSize(compactMinWidth, bubbleMin.Height)
+	prefSize = geom.NewSize(compactPrefWidth, bubblePref.Height)
+	maxSize = geom.NewSize(unison.DefaultMaxSize, max(bubbleMin.Height, bubblePref.Height))
+	return minSize, prefSize, maxSize
+}
+
+func (l *aiChatMessageRowLayout) PerformLayout(target *unison.Panel) {
+	rect := target.ContentRect(false)
+	if rect.Width <= 0 {
+		return
+	}
+	_, prefSize, _ := l.bubble.Sizes(rect.Size)
+	frame := rect
+	frame.Width = min(prefSize.Width, rect.Width)
+	frame.Height = prefSize.Height
+	if l.alignRight {
+		frame.X = rect.Right() - frame.Width
+	}
+	l.bubble.SetFrameRect(frame)
+}
+
+func (l *aiChatBubbleLayout) plainTextContentSize(maxWidth float32) geom.Size {
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	_, fieldPref, _ := l.field.Sizes(geom.NewSize(maxWidth, 0))
+	decoration := &unison.TextDecoration{Font: l.field.Font}
+	lines := unison.NewTextWrappedLines(l.message, decoration, maxWidth)
+	width := float32(0)
+	for _, line := range lines {
+		width = max(width, line.Width())
+	}
+	if width > 0 {
+		width += 2
+	}
+	if width > maxWidth {
+		width = maxWidth
+	}
+	return geom.NewSize(width, fieldPref.Height)
+}
+
+func (l *aiChatBubbleLayout) contentSizes(maxWidth float32) (minSize, prefSize geom.Size) {
+	if l.isHuman || !l.field.Hidden {
+		plainPref := l.plainTextContentSize(maxWidth)
+		if !l.field.Hidden {
+			return plainPref, plainPref
+		}
+		if plainPref.Width < 1 {
+			plainPref.Width = 1
+		}
+		l.markdown.SetContent(l.message, plainPref.Width)
+		_, markdownPref, _ := l.markdown.Sizes(geom.NewSize(plainPref.Width, 0))
+		prefSize = geom.NewSize(plainPref.Width, markdownPref.Height)
+		return prefSize, prefSize
+	}
+	l.markdown.SetContent(l.message, maxWidth)
+	minSize, prefSize, _ = l.markdown.Sizes(geom.NewSize(maxWidth, 0))
+	return minSize, prefSize
+}
+
+func (l *aiChatBubbleLayout) measure(target *unison.Panel, hint geom.Size) aiChatBubbleMeasurement {
+	var insets geom.Size
+	if border := target.Border(); border != nil {
+		insets = border.Insets().Size()
+	}
+	maxWidth := float32(aiChatBubbleMaxWidth)
+	if l.dockable != nil {
+		maxWidth = l.dockable.maxBubbleWidth(hint.Width, maxWidth)
+	}
+	if maxWidth <= 0 {
+		maxWidth = float32(aiChatBubbleMaxWidth)
+	}
+	if hint.Width > 0 {
+		maxWidth = min(maxWidth, hint.Width)
+	}
+	if maxWidth < insets.Width+1 {
+		maxWidth = insets.Width + 1
+	}
+	maxContentWidth := maxWidth - insets.Width
+	if maxContentWidth < 1 {
+		maxContentWidth = 1
+	}
+	headerHint := geom.NewSize(maxContentWidth, 0)
+	headerMin, headerPref, _ := l.header.Sizes(headerHint)
+	contentMin, contentPref := l.contentSizes(maxContentWidth)
+	minContentWidth := max(headerMin.Width, contentMin.Width)
+	prefContentWidth := max(headerPref.Width, contentPref.Width)
+	if minContentWidth > maxContentWidth {
+		minContentWidth = maxContentWidth
+	}
+	if prefContentWidth > maxContentWidth {
+		prefContentWidth = maxContentWidth
+	}
+	if prefContentWidth < minContentWidth {
+		prefContentWidth = minContentWidth
+	}
+	spacing := float32(0)
+	if headerPref.Height > 0 && contentPref.Height > 0 {
+		spacing = l.spacing
+	}
+	return aiChatBubbleMeasurement{
+		maxWidth:     maxWidth,
+		contentWidth: prefContentWidth,
+		minSize:      geom.NewSize(minContentWidth+insets.Width, headerMin.Height+contentMin.Height+spacing+insets.Height),
+		prefSize:     geom.NewSize(prefContentWidth+insets.Width, headerPref.Height+contentPref.Height+spacing+insets.Height),
+		headerPref:   headerPref,
+		contentPref:  contentPref,
+	}
+}
+
+func (l *aiChatBubbleLayout) LayoutSizes(target *unison.Panel, hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
+	measurement := l.measure(target, hint)
+	return measurement.minSize, measurement.prefSize, geom.NewSize(measurement.maxWidth, unison.DefaultMaxSize)
+}
+
+func (l *aiChatBubbleLayout) PerformLayout(target *unison.Panel) {
+	rect := target.ContentRect(false)
+	if rect.Width <= 0 {
+		return
+	}
+	measurement := l.measure(target, target.ContentRect(true).Size)
+	headerHeight := measurement.headerPref.Height
+	l.header.SetFrameRect(geom.NewRect(rect.X, rect.Y, rect.Width, headerHeight))
+	y := rect.Y + headerHeight
+	if headerHeight > 0 && measurement.contentPref.Height > 0 {
+		y += l.spacing
+	}
+	if l.field.Hidden {
+		l.markdown.SetContent(l.message, rect.Width)
+		_, markdownPref, _ := l.markdown.Sizes(geom.NewSize(rect.Width, 0))
+		l.markdown.SetFrameRect(geom.NewRect(rect.X, y, rect.Width, markdownPref.Height))
+		l.field.SetFrameRect(geom.NewRect(rect.X, y, 0, 0))
+		return
+	}
+	plainPref := l.plainTextContentSize(rect.Width)
+	l.field.SetFrameRect(geom.NewRect(rect.X, y, rect.Width, plainPref.Height))
+	l.markdown.SetFrameRect(geom.NewRect(rect.X, y, 0, 0))
 }
 
 // ShowAIChat shows the AI Chat window.
@@ -123,6 +335,10 @@ func (d *aiChatDockable) initContent() {
 	clearButton.Tooltip = newWrappedTooltip(i18n.Text("Clear Chat History"))
 	clearButton.ClickCallback = d.clearHistory
 	toolbar.AddChild(clearButton)
+	exportPDFButton := unison.NewSVGButton(svg.PDFFile)
+	exportPDFButton.Tooltip = newWrappedTooltip(i18n.Text("Export Chat History as PDF"))
+	exportPDFButton.ClickCallback = d.exportChatHistoryAsPDF
+	toolbar.AddChild(exportPDFButton)
 	configButton := unison.NewSVGButton(svg.Gears)
 	configButton.Tooltip = newWrappedTooltip(i18n.Text("Configure AI Settings"))
 	configButton.ClickCallback = ShowAISettings
@@ -130,29 +346,57 @@ func (d *aiChatDockable) initContent() {
 	d.AddChild(toolbar)
 	// Chat History
 	d.historyPanel = unison.NewPanel()
-	d.historyPanel.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: unison.StdVSpacing, HAlign: align.Fill})
+	d.historyPanel.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 8, Left: 4, Bottom: 8, Right: 4}))
+	d.historyPanel.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: unison.StdVSpacing / 2, HAlign: align.Fill})
 	d.scroll = unison.NewScrollPanel()
-	d.scroll.SetContent(d.historyPanel, behavior.Fill, behavior.Unmodified)
+	d.scroll.SetContent(d.historyPanel, behavior.Follow, behavior.Unmodified)
 	d.scroll.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, VGrab: true})
 	d.AddChild(d.scroll)
 	// Input area
 	inputArea := unison.NewPanel()
-	inputArea.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: unison.StdHSpacing})
+	inputArea.SetLayout(&unison.FlexLayout{Columns: 2, HSpacing: unison.StdHSpacing / 2})
 	inputArea.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
+	inputArea.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: unison.StdVSpacing / 2, Bottom: unison.StdVSpacing * 2}))
+	inputShell := unison.NewPanel()
+	inputShell.SetLayout(&unison.FlexLayout{Columns: 1})
+	inputShell.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Start, VAlign: align.Fill, MinSize: geom.Size{Width: aiChatInputFixedWidth}})
+	inputShell.SetSizer(func(hint geom.Size) (minSize, prefSize, maxSize geom.Size) {
+		width := float32(aiChatInputFixedWidth)
+		height := float32(aiChatInputMinHeight + 16)
+		minSize = geom.NewSize(width, height)
+		prefSize = geom.NewSize(width, height)
+		maxSize = geom.NewSize(width, height)
+		return minSize, prefSize, maxSize
+	})
+	inputShell.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 10, Left: 12, Bottom: 10, Right: 12}))
+	inputShell.DrawCallback = func(gc *unison.Canvas, rect geom.Rect) {
+		unison.DrawRoundedRectBase(gc, rect, geom.NewUniformSize(aiChatInputRadius), 0, aiChatInputBackground, aiChatInputEdge)
+	}
 	d.inputField = unison.NewMultiLineField()
-	d.inputField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, MinSize: geom.Size{Height: 50}})
+	d.inputField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, VAlign: align.Fill, HGrab: true, MinSize: geom.Size{Width: aiChatInputFixedWidth - 24, Height: aiChatInputMinHeight}})
+	d.inputField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
+	d.inputField.BackgroundInk = unison.Transparent
+	d.inputField.EditableInk = unison.Transparent
+	d.inputField.ErrorInk = unison.Transparent
+	d.inputField.SelectionInk = unison.White.SetAlphaIntensity(0.2)
+	d.inputField.OnSelectionInk = unison.ThemeOnSurface
+	d.inputField.NoSelectAllOnFocus = true
 	d.inputField.KeyDownCallback = func(keyCode unison.KeyCode, mod unison.Modifiers, repeat bool) bool {
-		if (keyCode == unison.KeyReturn || keyCode == unison.KeyNumPadEnter) && mod.ControlDown() {
+		if keyCode == unison.KeyReturn || keyCode == unison.KeyNumPadEnter {
+			if mod.ShiftDown() {
+				return d.inputField.DefaultKeyDown(keyCode, mod, repeat)
+			}
 			d.submit()
 			return true
 		}
 		return d.inputField.DefaultKeyDown(keyCode, mod, repeat)
 	}
-	inputArea.AddChild(d.inputField)
+	inputShell.AddChild(d.inputField)
+	inputArea.AddChild(inputShell)
 	d.submitButton = unison.NewButton()
 	d.submitButton.SetTitle(i18n.Text("Submit"))
 	d.submitButton.ClickCallback = d.submit
-	d.submitButton.SetLayoutData(align.End)
+	d.submitButton.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Start, VAlign: align.Middle})
 	inputArea.AddChild(d.submitButton)
 	d.AddChild(inputArea)
 }
@@ -160,9 +404,115 @@ func (d *aiChatDockable) initContent() {
 func (d *aiChatDockable) clearHistory() {
 	if unison.QuestionDialog(i18n.Text("Are you sure you want to clear the chat history?"), "") == unison.ModalResponseOK {
 		d.chatHistory = nil
+		d.chatMessages = nil
 		d.historyPanel.RemoveAllChildren()
 		d.historyPanel.MarkForLayoutAndRedraw()
 	}
+}
+
+func (d *aiChatDockable) maxBubbleWidth(availableWidth, targetWidth float32) float32 {
+	if availableWidth <= 0 && d.scroll != nil {
+		availableWidth = d.scroll.ContentRect(false).Width
+	}
+	if availableWidth <= 0 && d.historyPanel != nil {
+		availableWidth = d.historyPanel.ContentRect(false).Width
+	}
+	if availableWidth <= 0 {
+		return targetWidth
+	}
+	if availableWidth < 1 {
+		return 1
+	}
+	return min(availableWidth, targetWidth)
+}
+
+func (d *aiChatDockable) exportChatHistoryAsPDF() {
+	dialog := unison.NewSaveDialog()
+	dialog.SetAllowedExtensions("pdf")
+	dialog.SetInitialDirectory(gurps.GlobalSettings().LastDir(gurps.DefaultLastDirKey))
+	dialog.SetInitialFileName("ai-chat-history")
+	if !dialog.RunModal() {
+		return
+	}
+	filePath, ok := unison.ValidateSaveFilePath(dialog.Path(), "pdf", false)
+	if !ok {
+		return
+	}
+	gurps.GlobalSettings().SetLastDir(gurps.DefaultLastDirKey, filepath.Dir(filePath))
+	if err := os.Remove(filePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		Workspace.ErrorHandler(i18n.Text("Unable to export chat history as PDF"), err)
+		return
+	}
+	stream, err := unison.NewFileStream(filePath)
+	if err != nil {
+		Workspace.ErrorHandler(i18n.Text("Unable to export chat history as PDF"), err)
+		return
+	}
+	defer stream.Close()
+	exporter := newAIChatPDFExporter(d.chatMessages)
+	if err = unison.CreatePDF(stream, &unison.PDFMetaData{Title: i18n.Text("AI Chat History")}, exporter); err != nil {
+		Workspace.ErrorHandler(i18n.Text("Unable to export chat history as PDF"), err)
+		return
+	}
+	d.addMessage("AI", fmt.Sprintf(i18n.Text("Chat history exported to %s"), filePath))
+}
+
+func newAIChatPDFExporter(messages []aiChatMessage) *aiChatPDFExporter {
+	decoration := &unison.TextDecoration{Font: unison.DefaultLabelTheme.Font, OnBackgroundInk: unison.Black}
+	var textBuilder strings.Builder
+	for _, msg := range messages {
+		textBuilder.WriteString(msg.Author)
+		if !msg.Timestamp.IsZero() {
+			textBuilder.WriteString(" [")
+			textBuilder.WriteString(msg.Timestamp.Format("2006-01-02 3:04 PM"))
+			textBuilder.WriteString("]")
+		}
+		textBuilder.WriteString(":\n")
+		textBuilder.WriteString(msg.Text)
+		textBuilder.WriteString("\n\n")
+	}
+	if strings.TrimSpace(textBuilder.String()) == "" {
+		textBuilder.WriteString(i18n.Text("No chat messages available."))
+	}
+	usableWidth := float32(aiChatPDFPageWidth - aiChatPDFHorizontalInset*2)
+	lines := unison.NewTextWrappedLines(textBuilder.String(), decoration, usableWidth)
+	lineHeight := decoration.Font.LineHeight()
+	if len(lines) != 0 {
+		lineHeight = lines[0].Height()
+	}
+	usableHeight := float32(aiChatPDFPageHeight - aiChatPDFVerticalInset*2)
+	linesPerPage := int(usableHeight / lineHeight)
+	if linesPerPage < 1 {
+		linesPerPage = 1
+	}
+	return &aiChatPDFExporter{
+		lines:        lines,
+		pageSize:     geom.NewSize(aiChatPDFPageWidth, aiChatPDFPageHeight),
+		linesPerPage: linesPerPage,
+		topInset:     aiChatPDFVerticalInset,
+		leftInset:    aiChatPDFHorizontalInset,
+	}
+}
+
+func (p *aiChatPDFExporter) HasPage(pageNumber int) bool {
+	start := (pageNumber - 1) * p.linesPerPage
+	return start < len(p.lines)
+}
+
+func (p *aiChatPDFExporter) PageSize() geom.Size {
+	return p.pageSize
+}
+
+func (p *aiChatPDFExporter) DrawPage(canvas *unison.Canvas, pageNumber int) error {
+	start := (pageNumber - 1) * p.linesPerPage
+	end := min(start+p.linesPerPage, len(p.lines))
+	y := p.topInset
+	for i := start; i < end; i++ {
+		line := p.lines[i]
+		line.Draw(canvas, geom.NewPoint(p.leftInset, y+line.Baseline()))
+		y += line.Height()
+	}
+	return nil
 }
 
 func (d *aiChatDockable) submit() {
@@ -187,19 +537,151 @@ func (d *aiChatDockable) submit() {
 }
 
 func (d *aiChatDockable) addMessage(author, message string) *unison.Panel {
+	timestamp := time.Now()
+	d.chatMessages = append(d.chatMessages, aiChatMessage{Author: author, Text: message, Timestamp: timestamp})
+	isHuman := strings.EqualFold(author, i18n.Text("You"))
+	bubbleInk := unison.Ink(aiChatAIBubble)
+	textInk := unison.Ink(aiChatAIText)
+	edgeInk := unison.Ink(aiChatAIBubbleEdge)
+	if isHuman {
+		bubbleInk = aiChatHumanBubble
+		textInk = aiChatHumanText
+		edgeInk = unison.ThemeSurfaceEdge
+	}
+
+	var row *unison.Panel
+	var bubble *unison.Panel
+
+	row = unison.NewPanel()
+	row.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill, HGrab: true})
+	row.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 2, Bottom: 2}))
+
 	authorLabel := unison.NewLabel()
 	authorLabel.SetTitle(author)
+	authorLabel.Font = &unison.DynamicFont{Resolver: func() unison.FontDescriptor {
+		fd := unison.DefaultLabelTheme.Font.Descriptor()
+		fd.Size = max(fd.Size-1, float32(10))
+		return fd
+	}}
+	authorLabel.OnBackgroundInk = aiChatAuthorText
+	timestampLabel := unison.NewLabel()
+	timestampLabel.SetTitle(timestamp.Format("3:04 PM"))
+	timestampLabel.Font = &unison.DynamicFont{Resolver: func() unison.FontDescriptor {
+		fd := unison.DefaultLabelTheme.Font.Descriptor()
+		fd.Size = max(fd.Size-2, float32(9))
+		return fd
+	}}
+	timestampLabel.OnBackgroundInk = aiChatAuthorText
 	messageMarkdown := unison.NewMarkdown(false)
-	messageMarkdown.SetContent(message, 0)
 	adjustMarkdownThemeForPage(messageMarkdown, unison.DefaultLabelTheme.Font)
-	wrapper := unison.NewPanel()
-	wrapper.SetLayout(&unison.FlexLayout{Columns: 1, VSpacing: unison.StdVSpacing / 2})
-	wrapper.AddChild(authorLabel)
-	wrapper.AddChild(messageMarkdown)
-	wrapper.SetBorder(unison.NewCompoundBorder(unison.NewLineBorder(unison.ThemeSurfaceEdge, geom.Size{}, geom.NewUniformInsets(1), false), unison.NewEmptyBorder(unison.StdInsets())))
-	d.historyPanel.AddChild(wrapper)
+	messageMarkdown.OnBackgroundInk = textInk
+	messageMarkdown.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill})
+	messageMarkdown.SetContent(message, 0)
+	messageField := unison.NewMultiLineField()
+	messageField.SetText(message)
+	messageField.SetWrap(true)
+	messageField.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill})
+	messageField.SetBorder(unison.NewEmptyBorder(geom.Insets{}))
+	messageField.BackgroundInk = unison.Transparent
+	messageField.EditableInk = unison.Transparent
+	messageField.ErrorInk = unison.Transparent
+	messageField.OnBackgroundInk = textInk
+	messageField.OnEditableInk = textInk
+	messageField.OnErrorInk = textInk
+	messageField.RuneTypedCallback = func(_ rune) bool {
+		// Keep message history read-only while still allowing selection/copy.
+		return true
+	}
+	messageField.KeyDownCallback = func(keyCode unison.KeyCode, mod unison.Modifiers, repeat bool) bool {
+		if (mod.OSMenuCmdModifierDown() || mod.ControlDown()) && (keyCode == unison.KeyC || keyCode == unison.KeyInsert) {
+			if messageField.CanCopy() {
+				messageField.Copy()
+			}
+			return true
+		}
+		if (mod.OSMenuCmdModifierDown() || mod.ControlDown()) && (keyCode == unison.KeyX || keyCode == unison.KeyV) {
+			return true
+		}
+		if keyCode == unison.KeyBackspace || keyCode == unison.KeyDelete || keyCode == unison.KeyReturn || keyCode == unison.KeyNumPadEnter {
+			return true
+		}
+		return messageField.DefaultKeyDown(keyCode, mod, repeat)
+	}
+	messageField.Hidden = true
+
+	toggleSelectButton := unison.NewSVGButton(svg.Copy)
+	toggleSelectButton.Hidden = false
+	toggleSelectButton.Tooltip = newWrappedTooltip(i18n.Text("Select and copy this message"))
+	updateToggleVisibility := func(_ bool) {
+		// Keep the control always visible for quicker copy/select access.
+		toggleSelectButton.Hidden = false
+	}
+	toggleSelectButton.ClickCallback = func() {
+		selectMode := messageField.Hidden
+		messageField.Hidden = !selectMode
+		messageMarkdown.Hidden = selectMode
+		if selectMode {
+			toggleSelectButton.Tooltip = newWrappedTooltip(i18n.Text("Done selecting text"))
+			messageField.RequestFocus()
+		} else {
+			toggleSelectButton.Tooltip = newWrappedTooltip(i18n.Text("Select and copy this message"))
+		}
+		updateToggleVisibility(false)
+		bubble.MarkForLayoutAndRedraw()
+		row.MarkForLayoutAndRedraw()
+		d.historyPanel.MarkForLayoutAndRedraw()
+		d.historyPanel.ValidateLayout()
+		d.scroll.Sync()
+		row.ScrollIntoView()
+	}
+
+	header := unison.NewPanel()
+	header.SetLayout(&unison.FlowLayout{HSpacing: unison.StdHSpacing / 2, VSpacing: 0})
+	header.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Fill})
+	header.AddChild(authorLabel)
+	header.AddChild(timestampLabel)
+	header.AddChild(toggleSelectButton)
+
+	bubble = unison.NewPanel()
+	if isHuman {
+		bubble.SetLayoutData(&unison.FlexLayoutData{HAlign: align.End})
+	} else {
+		bubble.SetLayoutData(&unison.FlexLayoutData{HAlign: align.Start})
+	}
+	bubble.SetBorder(unison.NewEmptyBorder(geom.Insets{Top: 8, Left: 12, Bottom: 8, Right: 12}))
+	bubble.AddChild(header)
+	bubble.AddChild(messageMarkdown)
+	bubble.AddChild(messageField)
+	bubble.SetLayout(&aiChatBubbleLayout{
+		dockable: d,
+		message:  message,
+		isHuman:  isHuman,
+		header:   header,
+		markdown: messageMarkdown,
+		field:    messageField,
+		spacing:  4,
+	})
+	bubble.MouseEnterCallback = func(_ geom.Point, _ unison.Modifiers) bool {
+		updateToggleVisibility(true)
+		bubble.MarkForLayoutAndRedraw()
+		return false
+	}
+	bubble.MouseExitCallback = func() bool {
+		updateToggleVisibility(false)
+		bubble.MarkForLayoutAndRedraw()
+		return false
+	}
+	bubble.DrawCallback = func(gc *unison.Canvas, rect geom.Rect) {
+		unison.DrawRoundedRectBase(gc, rect, geom.NewUniformSize(aiChatBubbleRadius), 1, bubbleInk, edgeInk)
+	}
+	row.SetLayout(&aiChatMessageRowLayout{bubble: bubble, alignRight: isHuman})
+	row.AddChild(bubble)
+	d.historyPanel.AddChild(row)
 	d.historyPanel.MarkForLayoutAndRedraw()
-	return wrapper
+	d.historyPanel.ValidateLayout()
+	d.scroll.Sync()
+	row.ScrollIntoView()
+	return row
 }
 
 func (d *aiChatDockable) aiAssistantSystemPrompt() string {
@@ -209,32 +691,37 @@ func (d *aiChatDockable) aiAssistantSystemPrompt() string {
 Use the current character sheet state and the player's concept to make recommendations.
 Always validate choices, compute point costs, and keep Tech Level constraints in mind.
 Evaluate available library options against the character concept, game-world setting, and Tech Level.
-IMPORTANT: You MUST choose advantages, disadvantages, quirks, and skills ONLY from the complete lists provided below.
-Do NOT suggest any items not in these lists. Do NOT invent custom ability names.
+CRITICAL SYSTEM NOTES: You MUST choose advantages, disadvantages, quirks, traits, and skills ONLY from the complete lists provided below.
+Do NOT suggest any advantages, disadvantages, quirks, traits, and skills that are not in these lists. Do NOT invent custom ability names.
 For attributes, use only attribute ids that already exist on the current character sheet summary below. Do NOT invent attribute ids such as BX.
-When returning actions for advantages, disadvantages, quirks, skills, and equipment: ALWAYS include the exact id from the list entry.
+When returning actions for advantages, disadvantages, quirks, skills, traits, and equipment: ALWAYS include the exact id from the list entry.
 Use only the id value shown after "id=" in the list. Never use a library/source label (for example, never use "GURPS" as an id).
-For advantages, disadvantages, quirks, skills, and equipment, copy the exact listed name verbatim into the JSON "name" field.
+For advantages, disadvantages, quirks, skills, traits and equipment, copy the exact listed name verbatim into the JSON "name" field.
 If the list shows a specialization in parentheses, copy it exactly. For example, use "Driving (Automobile)", not "Driving (Car)" and not "Driving (Car) - Chevrolet Impala".
 Do not append explanations, descriptions, or item context to JSON names.
 For quirks, put roleplay flavor in "notes" and keep "name" equal to the exact listed quirk name only. Example: "name":"Must make an entrance", "notes":"with Groucho".
-Prefer existing library equipment first; only create a custom item if no suitable library equipment exists.
+If an item is not in the provided lists, do not include it in JSON updates.
+Do not use placeholder ids like "<skill-id>" or "<equipment-id>".
+Equipment must come from the provided equipment list; do not create custom equipment entries.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, ask the user to open or create a character sheet before proceeding.
-Some traits and skills require a subject or specialization to be filled in. These are shown in the library list with a "requires:" tag listing placeholder names (e.g. "requires: subject"). When adding such a trait or skill, you MUST supply a "notes" field containing the appropriate value. For example, Code of Honor (@subject@) with subject "Pirate's" would be: {"id":"<id>","name":"Code of Honor","notes":"Pirate's","points":"-10"}.
+Some traits and skills require a subject or specialization to be filled in. These are shown in the library list with a "requires:" tag listing placeholder names (e.g. "requires: subject"). When adding such a trait or skill, you MUST supply a "notes" field containing the appropriate value. 
 If a list entry does NOT show a "requires:" tag, do NOT invent a new parenthetical variant for it. Use the exact listed name or exact id only.
 If multiple concrete variants are listed, pick the exact matching variant from the list instead of synthesizing a new one.
 
 %s
 
-AVAILABLE LIBRARY ITEMS - Choose ONLY from these lists:
+AVAILABLE LIBRARY ITEMS - Choose ONLY from THIS list:
 %s
 
-When asked to apply changes, include a top-level JSON object showing character updates using items from the lists above. Keys:
+ADDITIONAL GUIDANCE:
+When asked to apply changes, include a top-level JSON object showing character updates using items from the lists ABOVE. 
+Below is an EXAMPLE do not use this example data in your response, it is for formatting reference only:
+Keys:
 - profile: {"name":"John Smith","gender":"M","age":"25","height":"5'10\"","weight":"180 lbs","hair":"brown","eyes":"blue","skin":"fair","handedness":"Right","title":"Adventurer","organization":"","religion":"","tech_level":"3"}
 - attributes: [{"id":"ST","value":"12"}]
 - advantages: [{"id":"<adv-id>","name":"Combat Reflexes","points":"15"}]
-- disadvantages: [{"id":"<disadv-id>","name":"Code of Honor","notes":"Pirate's","points":"-10"}]
+- disadvantages: [{"id":"<disadv-id>","name":"Code of Honor","notes":"Honor among thieves","points":"-10"}]
 - quirks: [{"id":"<quirk-id>","name":"Must make an entrance","points":"-1"}]
 - skills: [{"id":"<skill-id>","name":"Brawling","points":"4"}]
 - equipment: [{"id":"<equipment-id>","name":"Leather Armor","quantity":1}]
@@ -671,19 +1158,41 @@ func (d *aiChatDockable) setThinking(thinking bool) {
 	}
 }
 
-func (d *aiChatDockable) handleAIResponse(responseStr string) {
+func (d *aiChatDockable) handleAIResponseWithCh(responseStr string, retryCh chan<- []aiRetryItem) {
 	d.addMessage("AI", responseStr)
 	plan, ok := d.parseAIActionPlan(responseStr)
 	if !ok {
 		if strings.Contains(responseStr, "{") {
 			d.addMessage("AI", i18n.Text("Structured update data was detected, but it could not be parsed into a character-sheet update."))
 		}
+		retryCh <- nil
 		return
 	}
-	warnings, err := d.applyAIActionPlan(plan)
+	warnings, retryItems, err := d.applyAIActionPlan(plan)
 	if err != nil {
 		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI plan could not be applied: %v"), err))
+		retryCh <- nil
 		return
+	}
+	for _, warning := range warnings {
+		d.addMessage("AI", warning)
+	}
+	if len(retryItems) == 0 {
+		d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+	}
+	retryCh <- retryItems
+}
+
+func (d *aiChatDockable) applyCorrectionResponse(responseStr string) {
+	plan, ok := d.parseAIActionPlan(responseStr)
+	if !ok {
+		d.addMessage("AI", i18n.Text("AI corrections could not be parsed."))
+		d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+		return
+	}
+	warnings, _, err := d.applyAIActionPlan(plan)
+	if err != nil {
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI correction could not be applied: %v"), err))
 	}
 	for _, warning := range warnings {
 		d.addMessage("AI", warning)
@@ -812,6 +1321,12 @@ type aiSkillAction struct {
 	Points aiFlexibleString `json:"points,omitempty"`
 	Value  aiFlexibleString `json:"value,omitempty"`
 	Level  aiFlexibleString `json:"level,omitempty"`
+}
+
+type aiRetryItem struct {
+	Category string
+	Name     string
+	Similar  []string
 }
 
 func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
@@ -1038,13 +1553,14 @@ func mergeAIProfileAction(dst, src *aiProfileAction) {
 	}
 }
 
-func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) {
+func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, []aiRetryItem, error) {
 	sheet := d.sheetOrCreateNew()
 	if sheet == nil || sheet.entity == nil {
-		return nil, fmt.Errorf("no active sheet to apply changes to")
+		return nil, nil, fmt.Errorf("no active sheet to apply changes to")
 	}
 	entity := sheet.entity
 	warnings := make([]string, 0)
+	retryItems := make([]aiRetryItem, 0)
 
 	for _, attr := range plan.Attributes {
 		if err := applyAttributeAction(entity, attr); err != nil {
@@ -1107,14 +1623,18 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) 
 			}
 			for _, expanded := range expandedActions {
 				var warning string
+				var retryItem *aiRetryItem
 				var err error
-				skills, warning, err = d.addOrUpdateSkill(entity, skills, expanded)
+				skills, warning, retryItem, err = d.addOrUpdateSkill(entity, skills, expanded)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("Warning: could not apply skill action: %v", err))
 					continue
 				}
 				if warning != "" {
 					warnings = append(warnings, warning)
+				}
+				if retryItem != nil {
+					retryItems = append(retryItems, *retryItem)
 				}
 			}
 		}
@@ -1147,7 +1667,7 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, error) 
 		// If the assistant requested to spend all CP, leave the sheet in a modified state.
 	}
 	MarkModified(sheet)
-	return warnings, nil
+	return warnings, retryItems, nil
 }
 
 func normalizeAIAttributeIdentifier(value string) string {
@@ -1556,6 +2076,12 @@ func traitNameLookupCandidates(raw string) []string {
 	if alias := traitAliasName(trimmed); alias != "" {
 		add(alias, &results)
 	}
+	trimmedLower := strings.ToLower(trimmed)
+	if strings.HasSuffix(trimmedLower, "s") {
+		add(strings.TrimSpace(trimmed[:len(trimmed)-1]), &results)
+	} else {
+		add(trimmed+"s", &results)
+	}
 	return results
 }
 
@@ -1659,9 +2185,6 @@ func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, gurp
 	if requestedBaseNorm == "" {
 		requestedBaseNorm = normalizeLookupText(name)
 	}
-	var fuzzyMatch *gurps.Skill
-	var fuzzyFile gurps.LibraryFile
-	bestScore := int(^uint(0) >> 1)
 	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SkillsExt) {
 		for _, ref := range set.List {
 			skills, err := gurps.NewSkillsFromFile(ref.FileSystem, ref.FilePath)
@@ -1688,29 +2211,8 @@ func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, gurp
 					skill.SetDataOwner(nil)
 					return skill, libraryFileForSet(set.Name, ref.FilePath), nil
 				}
-				if requestedNorm == "" || candidateNorm == "" {
-					continue
-				}
-				if requestedSpecNorm != "" && candidateBaseNorm != requestedBaseNorm {
-					continue
-				}
-				if strings.Contains(candidateNorm, requestedNorm) || strings.Contains(requestedNorm, candidateNorm) {
-					score := len(candidateNorm) - len(requestedNorm)
-					if score < 0 {
-						score = -score
-					}
-					if score < bestScore {
-						fuzzyMatch = skill
-						fuzzyFile = libraryFileForSet(set.Name, ref.FilePath)
-						bestScore = score
-					}
-				}
 			}
 		}
-	}
-	if fuzzyMatch != nil {
-		fuzzyMatch.SetDataOwner(nil)
-		return fuzzyMatch, fuzzyFile, nil
 	}
 	return nil, gurps.LibraryFile{}, nil
 }
@@ -1756,6 +2258,44 @@ func (d *aiChatDockable) skillLookupDebugDetails(name, idStr string) string {
 		return fmt.Sprintf("skill_lookup_debug={id:%q normalized:%q scanned:%d similar:none}", idStr, requestedNorm, total)
 	}
 	return fmt.Sprintf("skill_lookup_debug={id:%q normalized:%q scanned:%d similar:%q}", idStr, requestedNorm, total, strings.Join(similar, ", "))
+}
+
+func (d *aiChatDockable) findSimilarLibrarySkillNames(name string) []string {
+	requestedNorm := normalizeLookupText(name)
+	if requestedNorm == "" {
+		return nil
+	}
+	similar := make([]string, 0, 5)
+	seen := make(map[string]struct{})
+	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SkillsExt) {
+		for _, ref := range set.List {
+			skills, err := gurps.NewSkillsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, skill := range skills {
+				if skill.Container() {
+					continue
+				}
+				if len(similar) >= 5 {
+					break
+				}
+				displayName := skillDisplayName(skill.Name, skill.Specialization)
+				candNorm := normalizeLookupText(displayName)
+				if candNorm == "" {
+					continue
+				}
+				if strings.Contains(candNorm, requestedNorm) || strings.Contains(requestedNorm, candNorm) {
+					if _, exists := seen[displayName]; exists {
+						continue
+					}
+					seen[displayName] = struct{}{}
+					similar = append(similar, displayName)
+				}
+			}
+		}
+	}
+	return similar
 }
 
 func (d *aiChatDockable) findLibraryEquipmentByID(idStr string) (*gurps.Equipment, gurps.LibraryFile, error) {
@@ -1894,7 +2434,7 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 	return append(traits, cloned), "", nil
 }
 
-func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.Skill, action aiSkillAction) ([]*gurps.Skill, string, error) {
+func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.Skill, action aiSkillAction) ([]*gurps.Skill, string, *aiRetryItem, error) {
 	name := normalizeAISkillName(action.Name.String())
 	idStr := normalizeAISelectionID(action.ID.String())
 	useTIDLookup := idStr != "" && tid.IsValid(tid.TID(idStr))
@@ -1903,7 +2443,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 		name = normalizeAISkillName(idStr)
 	}
 	if name == "" && !useTIDLookup {
-		return skills, "", fmt.Errorf("skill action is missing a name or valid id")
+		return skills, "", nil, fmt.Errorf("skill action is missing a name or valid id")
 	}
 	pointsText := strings.TrimSpace(action.Points.String())
 	if pointsText == "" {
@@ -1926,7 +2466,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
-			return skills, "", nil
+			return skills, "", nil, nil
 		}
 	}
 	if name != "" {
@@ -1941,7 +2481,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
-			return skills, "", nil
+			return skills, "", nil, nil
 		}
 	}
 	var librarySkill *gurps.Skill
@@ -1952,7 +2492,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	if useTIDLookup {
 		librarySkill, libFile, err = d.findLibrarySkillByID(idStr)
 		if err != nil {
-			return skills, "", err
+			return skills, "", nil, err
 		}
 	}
 
@@ -1960,7 +2500,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	if librarySkill == nil && name != "" {
 		librarySkill, libFile, err = d.findLibrarySkillByName(name)
 		if err != nil {
-			return skills, "", err
+			return skills, "", nil, err
 		}
 	}
 
@@ -1969,13 +2509,15 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	if librarySkill == nil && idStr != "" && !strings.EqualFold(idStr, name) && !useTIDLookup {
 		librarySkill, libFile, err = d.findLibrarySkillByName(idStr)
 		if err != nil {
-			return skills, "", err
+			return skills, "", nil, err
 		}
 	}
 
 	if librarySkill == nil {
+		similar := d.findSimilarLibrarySkillNames(name)
+		retryItem := &aiRetryItem{Category: "skill", Name: name, Similar: similar}
 		details := d.skillLookupDebugDetails(name, idStr)
-		return skills, fmt.Sprintf("%sWarning: skill %q was not found in the library and was skipped. Skills must be chosen from available database entries. %s", warningPrefix, name, details), nil
+		return skills, fmt.Sprintf("%sWarning: skill %q was not found in the library and was skipped. Skills must be chosen from available database entries. %s", warningPrefix, name, details), retryItem, nil
 	}
 	cloned := librarySkill.Clone(libFile, entity, nil, false)
 	applyNameablesToClonedSkill(cloned, name, action.Notes.String())
@@ -1989,7 +2531,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 			cloned.LevelData.Level = level
 		}
 	}
-	return append(skills, cloned), "", nil
+	return append(skills, cloned), "", nil, nil
 }
 
 func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []*gurps.Equipment, action aiNamedAction) ([]*gurps.Equipment, string, error) {
@@ -2044,13 +2586,7 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 	}
 
 	if libraryEquipment == nil {
-		custom := gurps.NewEquipment(entity, nil, false)
-		custom.Name = name
-		custom.Quantity = fxp.One
-		if action.Quantity.Int() > 0 {
-			custom.Quantity = fxp.FromInteger(action.Quantity.Int())
-		}
-		return append(equipment, custom), fmt.Sprintf("%sNotice: custom equipment %q was added because no library match was found. Library equipment is preferred.", warningPrefix, name), nil
+		return equipment, fmt.Sprintf("%sWarning: equipment %q was not found in the library and was skipped. Equipment must be chosen from provided library entries.", warningPrefix, name), nil
 	}
 	cloned := libraryEquipment.Clone(libFile, entity, nil, false)
 	if action.Quantity.Int() != 0 {
@@ -2159,6 +2695,24 @@ func (d *aiChatDockable) findExistingEquipmentByID(entity *gurps.Entity, idStr s
 	return nil
 }
 
+func buildAIRetryPrompt(items []aiRetryItem) string {
+	var b strings.Builder
+	b.WriteString("Some items were not found in the library and were skipped.\n")
+	b.WriteString("Return a JSON object with ONLY corrected entries for these items.\n")
+	b.WriteString("You MUST choose replacement names exclusively from the alternatives listed below.\n\n")
+	for _, item := range items {
+		b.WriteString(fmt.Sprintf("- %s %q was not found.", item.Category, item.Name))
+		if len(item.Similar) > 0 {
+			b.WriteString(fmt.Sprintf(" Available alternatives: %s.", strings.Join(item.Similar, ", ")))
+		} else {
+			b.WriteString(" No close alternatives found; omit this item.")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\nReturn ONLY the corrected JSON for these items, using the exact alternative names shown.")
+	return b.String()
+}
+
 func (d *aiChatDockable) queryGemini(prompt string) {
 	settings := gurps.GlobalSettings().AI
 	if settings.GeminiAPIKey == "" {
@@ -2196,9 +2750,36 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 			}
 		}
 		responseStr := responseText.String()
-		unison.InvokeTask(func() { d.handleAIResponse(responseStr) })
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "model"})
+		retryCh := make(chan []aiRetryItem, 1)
+		unison.InvokeTask(func() { d.handleAIResponseWithCh(responseStr, retryCh) })
+		retryItems := <-retryCh
+		if len(retryItems) > 0 {
+			correctionPrompt := buildAIRetryPrompt(retryItems)
+			chat2 := model.StartChat()
+			systemPrompt2 := d.aiAssistantSystemPrompt()
+			chat2.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt2)}}}, d.chatHistory...)
+			resp2, err2 := chat2.SendMessage(ctx, genai.Text(correctionPrompt))
+			if err2 == nil {
+				var corrText strings.Builder
+				for _, cand := range resp2.Candidates {
+					if cand.Content != nil {
+						for _, part := range cand.Content.Parts {
+							if txt, ok := part.(genai.Text); ok {
+								corrText.WriteString(string(txt))
+							}
+						}
+					}
+				}
+				correctionStr := corrText.String()
+				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionPrompt)}, Role: "user"})
+				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionStr)}, Role: "model"})
+				doneCh := make(chan struct{}, 1)
+				unison.InvokeTask(func() { d.applyCorrectionResponse(correctionStr); doneCh <- struct{}{} })
+				<-doneCh
+			}
+		}
 	}()
 }
 
@@ -2358,8 +2939,62 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 			unison.InvokeTask(func() { d.addMessage("AI", i18n.Text("Local AI server returned no text.")) })
 			return
 		}
-		unison.InvokeTask(func() { d.handleAIResponse(responseStr) })
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "assistant"})
+		retryCh := make(chan []aiRetryItem, 1)
+		unison.InvokeTask(func() { d.handleAIResponseWithCh(responseStr, retryCh) })
+		retryItems := <-retryCh
+		if len(retryItems) > 0 {
+			correctionPrompt := buildAIRetryPrompt(retryItems)
+			corrMessages := []message{{Role: "system", Content: d.aiAssistantSystemPrompt()}}
+			for _, entry := range d.chatHistory {
+				ct := marshalContent(entry)
+				if ct != "" {
+					corrMessages = append(corrMessages, message{Role: normalizeRole(entry.Role), Content: ct})
+				}
+			}
+			corrMessages = append(corrMessages, message{Role: "user", Content: correctionPrompt})
+			corrReqBody := struct {
+				Model    string    `json:"model"`
+				Messages []message `json:"messages"`
+				Stream   bool      `json:"stream"`
+			}{Model: model, Messages: corrMessages, Stream: false}
+			corrB, marshalErr := json.Marshal(corrReqBody)
+			if marshalErr == nil {
+				var corrStr string
+				for _, path := range paths {
+					corrResp, corrErr := http.Post(endpoint+path, "application/json", bytes.NewReader(corrB)) //nolint:noctx
+					if corrErr != nil {
+						break
+					}
+					if corrResp.StatusCode != http.StatusOK {
+						corrResp.Body.Close()
+						continue
+					}
+					var corrResult struct {
+						Message *struct {
+							Content string `json:"content,omitempty"`
+						} `json:"message,omitempty"`
+						Response string `json:"response,omitempty"`
+					}
+					decodeErr := json.NewDecoder(corrResp.Body).Decode(&corrResult)
+					corrResp.Body.Close()
+					if decodeErr == nil {
+						corrStr = strings.TrimSpace(corrResult.Response)
+						if corrStr == "" && corrResult.Message != nil {
+							corrStr = strings.TrimSpace(corrResult.Message.Content)
+						}
+					}
+					break
+				}
+				if corrStr != "" {
+					d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionPrompt)}, Role: "user"})
+					d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(corrStr)}, Role: "assistant"})
+					doneCh := make(chan struct{}, 1)
+					unison.InvokeTask(func() { d.applyCorrectionResponse(corrStr); doneCh <- struct{}{} })
+					<-doneCh
+				}
+			}
+		}
 	}()
 }
