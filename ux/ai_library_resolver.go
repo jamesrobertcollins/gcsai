@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +43,13 @@ var (
 	aiResolverDebugLogLock       sync.Mutex
 	aiResolverDebugLogWriter     = aiAppendResolverDebugLog
 	aiResolverDebugCounterWriter = aiUpdateResolverDebugCounters
+	aiNameableTemplatePattern    = regexp.MustCompile(`@[^@]+@`)
+	aiConceptSearchStopWords     = map[string]struct{}{
+		"a": {}, "an": {}, "and": {}, "at": {}, "for": {}, "from": {}, "in": {}, "into": {},
+		"of": {}, "on": {}, "or": {}, "the": {}, "to": {}, "with": {}, "using": {},
+		"character": {}, "build": {}, "gurps": {}, "fourth": {}, "edition": {}, "point": {},
+		"points": {}, "cp": {}, "tl": {},
+	}
 )
 
 func (c aiLibraryCategory) String() string {
@@ -80,13 +88,14 @@ type aiRetryCandidate struct {
 }
 
 type aiRetryItem struct {
-	Category   string
-	Name       string
-	Notes      string
-	Points     string
-	Quantity   int
-	Candidates []aiRetryCandidate
-	Similar    []string
+	Category    string
+	Name        string
+	Notes       string
+	Description string
+	Points      string
+	Quantity    int
+	Candidates  []aiRetryCandidate
+	Similar     []string
 }
 
 type aiLibraryCatalogEntry struct {
@@ -358,7 +367,7 @@ func aiLogAliasHit(category aiLibraryCategory, input, mapped string) {
 	)
 }
 
-func aiLogUnresolvedIntent(category aiLibraryCategory, originalIntent, lookupIntent, notes, points string, quantity int, ranked []aiRankedCatalogEntry) {
+func aiLogUnresolvedIntent(category aiLibraryCategory, originalIntent, lookupIntent, notes, description, points string, quantity int, ranked []aiRankedCatalogEntry) {
 	fields := []string{
 		fmt.Sprintf("category=%s", aiCategoryJSONField(string(category))),
 		fmt.Sprintf("input=%q", strings.TrimSpace(originalIntent)),
@@ -369,6 +378,9 @@ func aiLogUnresolvedIntent(category aiLibraryCategory, originalIntent, lookupInt
 	}
 	if trimmedNotes := strings.TrimSpace(notes); trimmedNotes != "" {
 		fields = append(fields, fmt.Sprintf("notes=%q", trimmedNotes))
+	}
+	if trimmedDescription := strings.TrimSpace(description); trimmedDescription != "" {
+		fields = append(fields, fmt.Sprintf("description=%q", trimmedDescription))
 	}
 	if trimmedPoints := strings.TrimSpace(points); trimmedPoints != "" {
 		fields = append(fields, fmt.Sprintf("points=%q", trimmedPoints))
@@ -471,6 +483,238 @@ func aiLibraryCatalogSignature(libraries gurps.Libraries) string {
 		}
 	}
 	return builder.String()
+}
+
+func aiConceptSearchTokens(concept string) []string {
+	concept = strings.TrimSpace(strings.ToLower(concept))
+	if concept == "" {
+		return nil
+	}
+	var tokenBuilder strings.Builder
+	tokens := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	flushToken := func() {
+		if tokenBuilder.Len() == 0 {
+			return
+		}
+		token := canonicalizeSkillLookupToken(tokenBuilder.String())
+		tokenBuilder.Reset()
+		if len(token) < 2 || isTLToken(token) {
+			return
+		}
+		if _, stopWord := aiConceptSearchStopWords[token]; stopWord {
+			return
+		}
+		if _, exists := seen[token]; exists {
+			return
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+	for _, r := range concept {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			tokenBuilder.WriteRune(r)
+			continue
+		}
+		flushToken()
+	}
+	flushToken()
+	return tokens
+}
+
+func aiConceptEntryScore(entry *aiLibraryCatalogEntry, conceptNorm string, tokens []string) float64 {
+	if entry == nil {
+		return 0
+	}
+	displayNorm := normalizeLookupText(entry.DisplayName)
+	baseNorm := normalizeLookupText(entry.BaseName)
+	specNorm := aiCandidateSpecNorm(entry)
+	if displayNorm == "" && baseNorm == "" && specNorm == "" {
+		return 0
+	}
+	score := 0.0
+	if conceptNorm != "" {
+		if displayNorm != "" {
+			score += aiNormalizedSimilarity(conceptNorm, displayNorm) * 4
+			if strings.Contains(displayNorm, conceptNorm) || strings.Contains(conceptNorm, displayNorm) {
+				score += 10
+			}
+		}
+		if baseNorm != "" && baseNorm != displayNorm {
+			score += aiNormalizedSimilarity(conceptNorm, baseNorm) * 2
+		}
+	}
+	for _, token := range tokens {
+		tokenScore := 0.0
+		if displayNorm != "" {
+			if strings.Contains(displayNorm, token) {
+				tokenScore += 7
+			}
+			if token == displayNorm {
+				tokenScore += 5
+			}
+		}
+		if baseNorm != "" {
+			if strings.Contains(baseNorm, token) {
+				tokenScore += 5
+			}
+			if token == baseNorm {
+				tokenScore += 4
+			}
+		}
+		if specNorm != "" {
+			if strings.Contains(specNorm, token) {
+				tokenScore += 4
+			}
+			if token == specNorm {
+				tokenScore += 3
+			}
+		}
+		score += tokenScore
+	}
+	return score
+}
+
+func (c *aiLibraryCatalog) searchConceptEntries(concept string, limits map[aiLibraryCategory]int) map[aiLibraryCategory][]*aiLibraryCatalogEntry {
+	results := make(map[aiLibraryCategory][]*aiLibraryCatalogEntry, len(limits))
+	if c == nil || len(limits) == 0 {
+		return results
+	}
+	conceptNorm := normalizeLookupText(concept)
+	tokens := aiConceptSearchTokens(concept)
+	if conceptNorm == "" && len(tokens) == 0 {
+		return results
+	}
+	for category, limit := range limits {
+		if limit <= 0 {
+			continue
+		}
+		ranked := make([]aiRankedCatalogEntry, 0, len(c.byCategory[category]))
+		seen := make(map[string]struct{}, len(c.byCategory[category]))
+		for _, entry := range c.byCategory[category] {
+			if entry == nil {
+				continue
+			}
+			semanticKey := aiCatalogEntrySemanticKey(entry)
+			if _, exists := seen[semanticKey]; exists {
+				continue
+			}
+			seen[semanticKey] = struct{}{}
+			score := aiConceptEntryScore(entry, conceptNorm, tokens)
+			if score <= 0 {
+				continue
+			}
+			ranked = append(ranked, aiRankedCatalogEntry{Entry: entry, Score: score})
+		}
+		sort.Slice(ranked, func(i, j int) bool {
+			if ranked[i].Score == ranked[j].Score {
+				if ranked[i].Entry.DisplayName == ranked[j].Entry.DisplayName {
+					return ranked[i].Entry.ID < ranked[j].Entry.ID
+				}
+				return ranked[i].Entry.DisplayName < ranked[j].Entry.DisplayName
+			}
+			return ranked[i].Score > ranked[j].Score
+		})
+		ranked = aiSelectConceptRecommendationEntries(category, ranked, limit)
+		entries := make([]*aiLibraryCatalogEntry, 0, len(ranked))
+		for _, rankedEntry := range ranked {
+			entries = append(entries, rankedEntry.Entry)
+		}
+		if len(entries) != 0 {
+			results[category] = entries
+		}
+	}
+	return results
+}
+
+func aiSelectConceptRecommendationEntries(category aiLibraryCategory, ranked []aiRankedCatalogEntry, limit int) []aiRankedCatalogEntry {
+	if limit <= 0 || len(ranked) == 0 {
+		return nil
+	}
+	if len(ranked) <= limit {
+		return ranked
+	}
+	groupLimit := aiConceptRecommendationGroupLimit(category)
+	if groupLimit <= 0 {
+		return ranked[:limit]
+	}
+	selected := make([]aiRankedCatalogEntry, 0, limit)
+	overflow := make([]aiRankedCatalogEntry, 0, len(ranked))
+	groupCounts := make(map[string]int, len(ranked))
+	for _, rankedEntry := range ranked {
+		groupKey := aiConceptRecommendationGroupKey(category, rankedEntry.Entry)
+		if groupKey != "" && groupCounts[groupKey] >= groupLimit {
+			overflow = append(overflow, rankedEntry)
+			continue
+		}
+		selected = append(selected, rankedEntry)
+		if groupKey != "" {
+			groupCounts[groupKey]++
+		}
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	for _, rankedEntry := range overflow {
+		selected = append(selected, rankedEntry)
+		if len(selected) == limit {
+			break
+		}
+	}
+	return selected
+}
+
+func aiConceptRecommendationGroupLimit(category aiLibraryCategory) int {
+	switch category {
+	case aiLibraryCategorySkill:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func aiConceptRecommendationGroupKey(category aiLibraryCategory, entry *aiLibraryCatalogEntry) string {
+	if entry == nil {
+		return ""
+	}
+	switch category {
+	case aiLibraryCategorySkill:
+		if base := normalizeLookupText(entry.BaseName); base != "" {
+			return base
+		}
+	}
+	return ""
+}
+
+func (c *aiLibraryCatalog) recommendedTermsForConcept(concept string, limits map[aiLibraryCategory]int) string {
+	results := c.searchConceptEntries(concept, limits)
+	if len(results) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("Recommended Canonical GURPS Terms:\n")
+	for _, category := range aiLibraryCategories {
+		entries := results[category]
+		if len(entries) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			names = append(names, entry.DisplayName)
+		}
+		if len(names) == 0 {
+			continue
+		}
+		builder.WriteString("- ")
+		builder.WriteString(category.String())
+		builder.WriteString(": ")
+		builder.WriteString(strings.Join(names, ", "))
+		builder.WriteByte('\n')
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibraryCatalog, error) {
@@ -754,6 +998,17 @@ func (c *aiLibraryCatalog) resolveNamedAction(category aiLibraryCategory, action
 		}
 	}
 
+	if entry, derivedNotes := c.templateNameableMatch(category, rawName); entry != nil {
+		resolved := action
+		resolved.ID = aiFlexibleString(entry.ID)
+		if strings.TrimSpace(resolved.Notes.String()) == "" {
+			resolved.Notes = aiFlexibleString(derivedNotes)
+		}
+		resolved.Notes = aiFlexibleString(aiResolvedNotes(resolved.Notes.String(), rawName, entry))
+		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
+		return &resolved, nil, ""
+	}
+
 	ranked := c.rankCandidates(category, name)
 	if entry := aiAutoselectCandidate(category, name, ranked); entry != nil {
 		resolved := action
@@ -762,8 +1017,8 @@ func (c *aiLibraryCatalog) resolveNamedAction(category aiLibraryCategory, action
 		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
 		return &resolved, nil, ""
 	}
-	aiLogUnresolvedIntent(category, originalName, name, action.Notes.String(), action.Points.String(), action.Quantity.Int(), ranked)
-	retry := aiBuildRetryItem(string(category), name, action.Notes.String(), action.Points.String(), action.Quantity.Int(), ranked)
+	aiLogUnresolvedIntent(category, originalName, name, action.Notes.String(), action.Description.String(), action.Points.String(), action.Quantity.Int(), ranked)
+	retry := aiBuildRetryItem(string(category), name, action.Notes.String(), action.Description.String(), action.Points.String(), action.Quantity.Int(), ranked)
 	warning := fmt.Sprintf("Warning: %s %q could not be resolved to an exact library entry and is waiting for correction.", aiCategorySingular(string(category)), name)
 	return nil, retry, warning
 }
@@ -832,8 +1087,8 @@ func (c *aiLibraryCatalog) resolveSkillAction(action aiSkillAction) (*aiSkillAct
 		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
 		return &resolved, nil, ""
 	}
-	aiLogUnresolvedIntent(aiLibraryCategorySkill, originalName, name, action.Notes.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
-	retry := aiBuildRetryItem(string(aiLibraryCategorySkill), name, action.Notes.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
+	aiLogUnresolvedIntent(aiLibraryCategorySkill, originalName, name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
+	retry := aiBuildRetryItem(string(aiLibraryCategorySkill), name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
 	warning := fmt.Sprintf("Warning: skill %q could not be resolved to an exact library entry and is waiting for correction.", name)
 	return nil, retry, warning
 }
@@ -1030,16 +1285,100 @@ func aiResolvedNotes(explicitNotes, rawName string, entry *aiLibraryCatalogEntry
 	if strings.EqualFold(strings.TrimSpace(aiLookupBaseName(requestedBase)), aiLookupBaseName(baseName)) && strings.TrimSpace(requestedSpec) != "" {
 		return strings.TrimSpace(requestedSpec)
 	}
+	if templateValue := aiExtractTemplateNameableValue(rawName, entry); templateValue != "" {
+		return templateValue
+	}
 	return strings.TrimSpace(extractParenthetical(rawName))
 }
 
-func aiBuildRetryItem(category, name, notes, points string, quantity int, ranked []aiRankedCatalogEntry) *aiRetryItem {
+func (c *aiLibraryCatalog) templateNameableMatch(category aiLibraryCategory, rawName string) (*aiLibraryCatalogEntry, string) {
+	rawName = strings.TrimSpace(rawName)
+	if c == nil || rawName == "" {
+		return nil, ""
+	}
+	var match *aiLibraryCatalogEntry
+	var derivedNotes string
+	for _, entry := range c.byCategory[category] {
+		if entry == nil || len(entry.Nameables) == 0 {
+			continue
+		}
+		value := aiExtractTemplateNameableValue(rawName, entry)
+		if value == "" {
+			continue
+		}
+		if match != nil && aiCatalogEntrySemanticKey(match) != aiCatalogEntrySemanticKey(entry) {
+			return nil, ""
+		}
+		match = entry
+		derivedNotes = value
+	}
+	return match, derivedNotes
+}
+
+func aiExtractTemplateNameableValue(rawName string, entry *aiLibraryCatalogEntry) string {
+	if entry == nil || len(entry.Nameables) == 0 {
+		return ""
+	}
+	rawTokens := aiTemplateComparableTokens(rawName)
+	if len(rawTokens) == 0 {
+		return ""
+	}
+	for _, candidate := range []string{entry.Name, entry.DisplayName, entry.BaseName} {
+		prefixTokens := aiTemplateComparableTokens(aiStripNameableTemplate(candidate))
+		if len(prefixTokens) == 0 || len(rawTokens) <= len(prefixTokens) {
+			continue
+		}
+		matched := true
+		for i := range prefixTokens {
+			if aiTemplateComparableToken(prefixTokens[i]) != aiTemplateComparableToken(rawTokens[i]) {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		value := strings.TrimSpace(strings.Join(rawTokens[len(prefixTokens):], " "))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func aiStripNameableTemplate(text string) string {
+	text = aiNameableTemplatePattern.ReplaceAllString(text, " ")
+	text = strings.NewReplacer("(", " ", ")", " ", "[", " ", "]", " ", "{", " ", "}", " ", ",", " ", ";", " ", ":", " ").Replace(text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func aiTemplateComparableTokens(text string) []string {
+	text = aiStripNameableTemplate(text)
+	if text == "" {
+		return nil
+	}
+	return strings.Fields(text)
+}
+
+func aiTemplateComparableToken(token string) string {
+	token = normalizeLookupText(token)
+	if strings.HasSuffix(token, "ies") && len(token) > 3 {
+		return token[:len(token)-3] + "y"
+	}
+	if strings.HasSuffix(token, "s") && len(token) > 3 && !strings.HasSuffix(token, "ss") {
+		return strings.TrimSuffix(token, "s")
+	}
+	return token
+}
+
+func aiBuildRetryItem(category, name, notes, description, points string, quantity int, ranked []aiRankedCatalogEntry) *aiRetryItem {
 	item := &aiRetryItem{
-		Category: aiCategoryJSONField(category),
-		Name:     strings.TrimSpace(name),
-		Notes:    strings.TrimSpace(notes),
-		Points:   strings.TrimSpace(points),
-		Quantity: quantity,
+		Category:    aiCategoryJSONField(category),
+		Name:        strings.TrimSpace(name),
+		Notes:       strings.TrimSpace(notes),
+		Description: strings.TrimSpace(description),
+		Points:      strings.TrimSpace(points),
+		Quantity:    quantity,
 	}
 	if len(ranked) == 0 {
 		return item
@@ -1134,22 +1473,24 @@ func aiActionPlanJSONSchema() map[string]any {
 	namedAction := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id":       stringField,
-			"name":     stringField,
-			"notes":    stringField,
-			"points":   stringField,
-			"quantity": map[string]any{"type": "integer"},
+			"id":          stringField,
+			"name":        stringField,
+			"notes":       stringField,
+			"description": stringField,
+			"points":      stringField,
+			"quantity":    map[string]any{"type": "integer"},
 		},
 	}
 	skillAction := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id":     stringField,
-			"name":   stringField,
-			"notes":  stringField,
-			"points": stringField,
-			"value":  stringField,
-			"level":  stringField,
+			"id":          stringField,
+			"name":        stringField,
+			"notes":       stringField,
+			"description": stringField,
+			"points":      stringField,
+			"value":       stringField,
+			"level":       stringField,
 		},
 	}
 	attributeAction := map[string]any{

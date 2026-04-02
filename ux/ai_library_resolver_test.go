@@ -314,6 +314,36 @@ func TestAIResolveTraitUsesNameableNotes(t *testing.T) {
 	}
 }
 
+func TestAIResolveTraitMatchesTemplateNameablePhrase(t *testing.T) {
+	catalog := newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "trait-heroic", Name: "Heroic Feats of @One of Strength, Dexterity, or Health@", DisplayName: "Heroic Feats of @One of Strength, Dexterity, or Health@", BaseName: "Heroic Feats of @One of Strength, Dexterity, or Health@", Nameables: []string{"One of Strength, Dexterity, or Health"}},
+	)
+
+	resolved, retryItem, warning := catalog.resolveNamedAction(aiLibraryCategoryAdvantage, aiNamedAction{
+		Name:   aiFlexibleString("Heroic Feat of Strength"),
+		Points: aiFlexibleString("5"),
+	})
+
+	if warning != "" {
+		t.Fatalf("expected no warning, got %q", warning)
+	}
+	if retryItem != nil {
+		t.Fatalf("expected no retry item, got %#v", retryItem)
+	}
+	if resolved == nil {
+		t.Fatal("expected a resolved trait action")
+	}
+	if got := resolved.ID.String(); got != "trait-heroic" {
+		t.Fatalf("expected trait-heroic, got %q", got)
+	}
+	if got := resolved.Notes.String(); got != "Strength" {
+		t.Fatalf("expected notes Strength, got %q", got)
+	}
+	if got := resolved.Name.String(); got != "Heroic Feats of @One of Strength, Dexterity, or Health@ (Strength)" {
+		t.Fatalf("expected resolved display to preserve template base with extracted notes, got %q", got)
+	}
+}
+
 func TestAIResolveTraitDeduplicatesEquivalentNameableEntries(t *testing.T) {
 	catalog := newTestAILibraryCatalog(
 		&aiLibraryCatalogEntry{Category: aiLibraryCategoryDisadvantage, ID: "trait-code-honor-a", Name: "Code of Honor (@subject@)", DisplayName: "Code of Honor", BaseName: "Code of Honor", Nameables: []string{"subject"}},
@@ -382,6 +412,89 @@ func TestAIResolveNamedActionRetryCandidatesDeduplicateEquivalentEntries(t *test
 	}
 	if got := (*captured)[0]; strings.Count(got, ":Magic Resistance") != 1 {
 		t.Fatalf("expected deduped log candidates for Magic Resistance, got %q", got)
+	}
+}
+
+func TestAIRecommendedTermsForConceptUsesCategoryLimits(t *testing.T) {
+	catalog := newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-signature", Name: "Signature Gear", DisplayName: "Signature Gear", BaseName: "Signature Gear"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-blessed", Name: "Blessed", DisplayName: "Blessed", BaseName: "Blessed"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-pistol", Name: "Guns", DisplayName: "Guns (Pistol)", BaseName: "Guns", Specialization: "Pistol"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-beam", Name: "Beam Weapons", DisplayName: "Beam Weapons (Pistol)", BaseName: "Beam Weapons", Specialization: "Pistol"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryEquipment, ID: "eq-pistol", Name: "Pistol", DisplayName: "Pistol", BaseName: "Pistol"},
+	)
+
+	terms := catalog.recommendedTermsForConcept("signature guns pistol", map[aiLibraryCategory]int{
+		aiLibraryCategoryAdvantage: 1,
+		aiLibraryCategorySkill:     1,
+		aiLibraryCategoryEquipment: 1,
+	})
+
+	checks := []string{
+		"Recommended Canonical GURPS Terms:",
+		"Advantages: Signature Gear",
+		"Skills: Guns (Pistol)",
+		"Equipment: Pistol",
+	}
+	for _, check := range checks {
+		if !strings.Contains(terms, check) {
+			t.Fatalf("expected recommended terms to contain %q, got %q", check, terms)
+		}
+	}
+	if strings.Contains(terms, "Blessed") || strings.Contains(terms, "Beam Weapons") {
+		t.Fatalf("expected category limits to suppress lower-ranked entries, got %q", terms)
+	}
+}
+
+func TestAIRecommendedTermsForConceptDiversifiesSkillFamilies(t *testing.T) {
+	catalog := newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-area-town", Name: "Area Knowledge", DisplayName: "Area Knowledge (Village or Town)", BaseName: "Area Knowledge", Specialization: "Village or Town"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-area-nation", Name: "Area Knowledge", DisplayName: "Area Knowledge (Large Nation)", BaseName: "Area Knowledge", Specialization: "Large Nation"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-politics", Name: "Politics", DisplayName: "Politics", BaseName: "Politics"},
+	)
+
+	terms := catalog.recommendedTermsForConcept("village nation politics", map[aiLibraryCategory]int{
+		aiLibraryCategorySkill: 2,
+	})
+
+	if strings.Count(terms, "Area Knowledge (") != 1 {
+		t.Fatalf("expected only one Area Knowledge recommendation, got %q", terms)
+	}
+	if !strings.Contains(terms, "Politics") {
+		t.Fatalf("expected diversified skill recommendation to include Politics, got %q", terms)
+	}
+}
+
+func TestAIResolveNamedActionUnresolvedLogsDescription(t *testing.T) {
+	captured := captureResolverDebugLog(t)
+	catalog := newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-signature", Name: "Signature Gear", DisplayName: "Signature Gear", BaseName: "Signature Gear"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-blessed", Name: "Blessed", DisplayName: "Blessed", BaseName: "Blessed"},
+	)
+
+	resolved, retryItem, warning := catalog.resolveNamedAction(aiLibraryCategoryAdvantage, aiNamedAction{
+		Name:        aiFlexibleString("Soulbound Hammer"),
+		Description: aiFlexibleString("Sentient relic"),
+		Points:      aiFlexibleString("5"),
+	})
+
+	if resolved != nil {
+		t.Fatalf("expected unresolved named action, got %#v", resolved)
+	}
+	if retryItem == nil {
+		t.Fatal("expected retry item")
+	}
+	if retryItem.Description != "Sentient relic" {
+		t.Fatalf("expected retry description to be preserved, got %#v", retryItem)
+	}
+	if warning == "" {
+		t.Fatal("expected unresolved warning")
+	}
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(*captured))
+	}
+	if got := (*captured)[0]; !strings.Contains(got, `description="Sentient relic"`) {
+		t.Fatalf("expected unresolved log to contain description, got %q", got)
 	}
 }
 

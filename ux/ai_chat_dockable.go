@@ -92,6 +92,7 @@ type aiChatDockable struct {
 	chatHistory      []*genai.Content
 	chatMessages     []aiChatMessage
 	buildSession     *aiBuildSessionContext
+	geminiBuild      *aiGeminiBuildSession
 	isThinking       bool
 	thinkingMessage  *unison.Panel
 }
@@ -481,6 +482,7 @@ func (d *aiChatDockable) clearHistory() {
 		d.chatHistory = nil
 		d.chatMessages = nil
 		d.buildSession = nil
+		d.geminiBuild = nil
 		d.inputField.SetText("")
 		d.historyPanel.RemoveAllChildren()
 		d.historyPanel.MarkForLayoutAndRedraw()
@@ -772,7 +774,10 @@ Do not invent database ids. Leave the "id" field empty unless you are certain.
 Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
 If a fixed specialization is part of the canonical library name, include it in "name". Example: "Driving (Automobile)".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item. Example: "Area Knowledge" with notes "Mesa".
-Do not create custom equipment or custom abilities.
+Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
+Do not invent non-library advantages, disadvantages, skills, or equipment names.
+If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
+Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
 For attributes, use only attribute ids that already exist on the current character sheet summary below. Do not invent ids such as BX.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
 If no sheet is active, say so plainly; the application can create one when applying changes.
@@ -785,10 +790,10 @@ Below is an EXAMPLE. Do not reuse the example content; it is only a formatting r
 Keys:
 - profile: {"name":"John Smith","gender":"M","age":"25","height":"5'10\"","weight":"180 lbs","hair":"brown","eyes":"blue","skin":"fair","handedness":"Right","title":"Adventurer","organization":"","religion":"","tech_level":"3"}
 - attributes: [{"id":"ST","value":"12"}]
-- advantages: [{"name":"Combat Reflexes","points":"15"}]
+- advantages: [{"name":"Signature Gear","description":"Groucho: A sentient magical hammer with a soul.","points":"5"}]
 - disadvantages: [{"name":"Code of Honor","notes":"Honor among thieves","points":"-10"}]
 - quirks: [{"name":"Must make an entrance","notes":"with Groucho","points":"-1"}]
-- skills: [{"name":"Brawling","points":"4"}]
+- skills: [{"name":"Area Knowledge","notes":"Mesa","points":"2"}]
 - equipment: [{"name":"Leather Armor","quantity":1}]
 - spend_all_cp: true
 
@@ -1408,20 +1413,22 @@ type aiAttributeAction struct {
 }
 
 type aiNamedAction struct {
-	ID       aiFlexibleString `json:"id,omitempty"`
-	Name     aiFlexibleString `json:"name"`
-	Notes    aiFlexibleString `json:"notes,omitempty"`
-	Points   aiFlexibleString `json:"points,omitempty"`
-	Quantity aiFlexibleInt    `json:"quantity,omitempty"`
+	ID          aiFlexibleString `json:"id,omitempty"`
+	Name        aiFlexibleString `json:"name"`
+	Notes       aiFlexibleString `json:"notes,omitempty"`
+	Description aiFlexibleString `json:"description,omitempty"`
+	Points      aiFlexibleString `json:"points,omitempty"`
+	Quantity    aiFlexibleInt    `json:"quantity,omitempty"`
 }
 
 type aiSkillAction struct {
-	ID     aiFlexibleString `json:"id,omitempty"`
-	Name   aiFlexibleString `json:"name"`
-	Notes  aiFlexibleString `json:"notes,omitempty"`
-	Points aiFlexibleString `json:"points,omitempty"`
-	Value  aiFlexibleString `json:"value,omitempty"`
-	Level  aiFlexibleString `json:"level,omitempty"`
+	ID          aiFlexibleString `json:"id,omitempty"`
+	Name        aiFlexibleString `json:"name"`
+	Notes       aiFlexibleString `json:"notes,omitempty"`
+	Description aiFlexibleString `json:"description,omitempty"`
+	Points      aiFlexibleString `json:"points,omitempty"`
+	Value       aiFlexibleString `json:"value,omitempty"`
+	Level       aiFlexibleString `json:"level,omitempty"`
 }
 
 func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
@@ -1666,6 +1673,7 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, []aiRet
 
 	if plan.Profile != nil {
 		applyProfileAction(entity, plan.Profile)
+		UpdateTitleForDockable(sheet)
 	}
 
 	if len(plan.Advantages) > 0 || len(plan.Disadvantages) > 0 || len(plan.Quirks) > 0 {
@@ -2066,6 +2074,33 @@ func applyNameablesToClonedSkill(cloned *gurps.Skill, aiName, aiNotes string) {
 		replacements[k] = value
 	}
 	cloned.Replacements = replacements
+}
+
+func applyAIItemDescriptionToTrait(trait *gurps.Trait, description string) {
+	if trait == nil {
+		return
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		trait.UserDesc = description
+	}
+}
+
+func applyAIItemDescriptionToSkill(skill *gurps.Skill, description string) {
+	if skill == nil {
+		return
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		skill.LocalNotes = description
+	}
+}
+
+func applyAIItemDescriptionToEquipment(equipment *gurps.Equipment, description string) {
+	if equipment == nil {
+		return
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		equipment.LocalNotes = description
+	}
 }
 
 // traitBaseNameForLookup strips nameable placeholder sections like "(@subject@)"
@@ -2475,6 +2510,7 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 					existing.BasePoints = points
 				}
 			}
+			applyAIItemDescriptionToTrait(existing, action.Description.String())
 			return traits, "", nil
 		}
 	}
@@ -2485,6 +2521,7 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 					existing.BasePoints = points
 				}
 			}
+			applyAIItemDescriptionToTrait(existing, action.Description.String())
 			return traits, "", nil
 		}
 	}
@@ -2538,6 +2575,7 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 	}
 	cloned := libraryTrait.Clone(libFile, entity, nil, false)
 	applyNameablesToClonedTrait(cloned, rawName, action.Notes.String())
+	applyAIItemDescriptionToTrait(cloned, action.Description.String())
 	if pointsText := strings.TrimSpace(action.Points.String()); pointsText != "" {
 		if points, err := fxp.FromString(pointsText); err == nil {
 			cloned.BasePoints = points
@@ -2578,6 +2616,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
+			applyAIItemDescriptionToSkill(existing, action.Description.String())
 			return skills, "", nil, nil
 		}
 	}
@@ -2593,6 +2632,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 					existing.LevelData.Level = level
 				}
 			}
+			applyAIItemDescriptionToSkill(existing, action.Description.String())
 			return skills, "", nil, nil
 		}
 	}
@@ -2633,6 +2673,7 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	}
 	cloned := librarySkill.Clone(libFile, entity, nil, false)
 	applyNameablesToClonedSkill(cloned, name, action.Notes.String())
+	applyAIItemDescriptionToSkill(cloned, action.Description.String())
 	if pointsText != "" {
 		if points, err := fxp.FromString(pointsText); err == nil {
 			cloned.Points = points
@@ -2662,6 +2703,7 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 			if action.Quantity.Int() != 0 {
 				existing.Quantity = fxp.FromInteger(action.Quantity.Int())
 			}
+			applyAIItemDescriptionToEquipment(existing, action.Description.String())
 			return equipment, "", nil
 		}
 	}
@@ -2670,6 +2712,7 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 			if action.Quantity.Int() != 0 {
 				existing.Quantity = fxp.FromInteger(action.Quantity.Int())
 			}
+			applyAIItemDescriptionToEquipment(existing, action.Description.String())
 			return equipment, "", nil
 		}
 	}
@@ -2704,6 +2747,7 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 	if action.Quantity.Int() != 0 {
 		cloned.Quantity = fxp.FromInteger(action.Quantity.Int())
 	}
+	applyAIItemDescriptionToEquipment(cloned, action.Description.String())
 	return append(equipment, cloned), "", nil
 }
 
@@ -2862,11 +2906,14 @@ func buildAIRetryPrompt(items []aiRetryItem) string {
 	var b strings.Builder
 	b.WriteString("Some items could not be resolved to exact library entries.\n")
 	b.WriteString("Return a JSON object with ONLY corrected entries for these unresolved items.\n")
-	b.WriteString("Use only the candidate ids and candidate names shown below. Preserve the original points, quantity, and notes unless the selected candidate requires a different nameable value.\n\n")
+	b.WriteString("Use only the candidate ids and candidate names shown below. Preserve the original points, quantity, notes, and description unless the selected candidate requires a different nameable value.\n\n")
 	for _, item := range items {
 		b.WriteString(fmt.Sprintf("- category=%s | requested=%q", aiCategoryJSONField(item.Category), item.Name))
 		if strings.TrimSpace(item.Notes) != "" {
 			b.WriteString(fmt.Sprintf(" | notes=%q", item.Notes))
+		}
+		if strings.TrimSpace(item.Description) != "" {
+			b.WriteString(fmt.Sprintf(" | description=%q", item.Description))
 		}
 		if strings.TrimSpace(item.Points) != "" {
 			b.WriteString(fmt.Sprintf(" | points=%q", item.Points))
@@ -2899,7 +2946,11 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		d.addMessage("AI", i18n.Text("Gemini API Key is not set. Please configure it in the AI Settings."))
 		return
 	}
-	prepared := d.prepareAIRequest(prompt)
+	prepared := d.prepareGeminiRequest(prompt)
+	if prepared.NeedsUserInput {
+		d.addMessage("AI", prepared.UserFacingMessage)
+		return
+	}
 	d.setThinking(true)
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
@@ -2910,27 +2961,16 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 			return
 		}
 		defer client.Close()
-		model := client.GenerativeModel("gemini-pro")
-		chat := model.StartChat()
-		systemPrompt := prepared.SystemPrompt
-		writeSystemPromptDebugFile(systemPrompt)
-		chat.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt)}}}, d.chatHistory...)
-		resp, err := chat.SendMessage(ctx, genai.Text(prepared.UserPrompt))
+		resolvedModel, modelWarning := d.resolveGeminiModelName(ctx, client)
+		if modelWarning != "" {
+			unison.InvokeTask(func() { d.addMessage("AI", modelWarning) })
+		}
+		writeSystemPromptDebugFile(prepared.SystemPrompt)
+		responseStr, err := d.sendGeminiRequest(ctx, resolvedModel, prepared.SystemPrompt, prepared.UserPrompt, prepared.ExpectJSON)
 		if err != nil {
 			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error generating content: %v"), err)) })
 			return
 		}
-		var responseText strings.Builder
-		for _, cand := range resp.Candidates {
-			if cand.Content != nil {
-				for _, part := range cand.Content.Parts {
-					if txt, ok := part.(genai.Text); ok {
-						responseText.WriteString(string(txt))
-					}
-				}
-			}
-		}
-		responseStr := responseText.String()
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prepared.UserPrompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "model"})
 		retryCh := make(chan []aiRetryItem, 1)
@@ -2938,22 +2978,8 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		retryItems := <-retryCh
 		if len(retryItems) > 0 {
 			correctionPrompt := buildAIRetryPrompt(retryItems)
-			chat2 := model.StartChat()
-			systemPrompt2 := d.aiAssistantSystemPrompt()
-			chat2.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt2)}}}, d.chatHistory...)
-			resp2, err2 := chat2.SendMessage(ctx, genai.Text(correctionPrompt))
+			correctionStr, err2 := d.sendGeminiRequest(ctx, resolvedModel, d.aiGeminiAssistantSystemPrompt(), correctionPrompt, true)
 			if err2 == nil {
-				var corrText strings.Builder
-				for _, cand := range resp2.Candidates {
-					if cand.Content != nil {
-						for _, part := range cand.Content.Parts {
-							if txt, ok := part.(genai.Text); ok {
-								corrText.WriteString(string(txt))
-							}
-						}
-					}
-				}
-				correctionStr := corrText.String()
 				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionPrompt)}, Role: "user"})
 				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionStr)}, Role: "model"})
 				doneCh := make(chan struct{}, 1)
@@ -3019,13 +3045,18 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				case followUpResolveErr != nil:
 					resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be resolved: %v"), followUpResolveErr))
 				case followUpResolution.Parsed:
+					filteredFollowUpPlan := aiFilterCorrectionPlan(followUpResolution.Plan, resolution.RetryItems)
+					ignoredCorrections := aiActionPlanItemCount(followUpResolution.Plan) - aiActionPlanItemCount(filteredFollowUpPlan)
+					if ignoredCorrections > 0 {
+						resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: ignored %d unrelated AI follow-up correction entries."), ignoredCorrections))
+					}
 					mergedPlan := aiActionPlanWithoutRetryItems(resolution.Plan, resolution.RetryItems)
-					mergeAIActionPlan(&mergedPlan, followUpResolution.Plan)
+					mergeAIActionPlan(&mergedPlan, filteredFollowUpPlan)
 					mergedResolution, mergedErr := d.resolveAIActionPlanResult(mergedPlan)
 					if mergedErr != nil {
 						resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be resolved: %v"), mergedErr))
 					} else {
-						if aiActionPlanItemCount(followUpResolution.Plan) < len(resolution.RetryItems) {
+						if aiActionPlanItemCount(filteredFollowUpPlan) < len(resolution.RetryItems) {
 							mergedResolution.Warnings = append(mergedResolution.Warnings, i18n.Text("Warning: some unresolved items were skipped because the follow-up response did not provide alternatives for all of them."))
 						}
 						resolution = mergedResolution

@@ -21,6 +21,29 @@ var aiAutoBalanceFallbackSkillNames = []string{
 	"Brawling",
 }
 
+const aiLocalCorrectionMaxPasses = 2
+
+var (
+	aiPhase1RecommendedTermLimits = map[aiLibraryCategory]int{
+		aiLibraryCategoryAdvantage:    8,
+		aiLibraryCategoryDisadvantage: 8,
+		aiLibraryCategoryQuirk:        6,
+	}
+	aiPhase2RecommendedTermLimits = map[aiLibraryCategory]int{
+		aiLibraryCategorySkill:     12,
+		aiLibraryCategoryEquipment: 8,
+	}
+	aiLocalCorrectionQueryModel = func(d *aiChatDockable, endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
+		return d.queryLocalModel(endpoint, model, messages, schema)
+	}
+	aiLocalCorrectionResolveFiltered = func(d *aiChatDockable, responseText string, filter func(aiActionPlan) aiActionPlan) (aiPlanResolutionResult, error) {
+		return d.resolveFilteredAIResponseText(responseText, filter)
+	}
+	aiLocalCorrectionResolvePlan = func(d *aiChatDockable, plan aiActionPlan) (aiPlanResolutionResult, error) {
+		return d.resolveAIActionPlanResult(plan)
+	}
+)
+
 type aiLocalGenerationPhaseApplyResult struct {
 	RemainingCP int
 	Summary     string
@@ -28,8 +51,47 @@ type aiLocalGenerationPhaseApplyResult struct {
 	Err         error
 }
 
+func aiResolvedActionPlanCount(plan aiActionPlan) int {
+	return len(plan.Attributes) + len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Equipment)
+}
+
+func aiRetryItemsContainPointBearingCategories(items []aiRetryItem) bool {
+	for _, item := range items {
+		switch aiCategoryJSONField(item.Category) {
+		case string(aiLibraryCategoryEquipment):
+			continue
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func aiRetryItemsSummary(items []aiRetryItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	limit := min(len(items), 4)
+	parts := make([]string, 0, limit+1)
+	for _, item := range items[:limit] {
+		parts = append(parts, fmt.Sprintf("%s %q", aiCategorySingular(item.Category), item.Name))
+	}
+	if len(items) > limit {
+		parts = append(parts, fmt.Sprintf("and %d more", len(items)-limit))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func aiLocalPhaseMessage(label, responseText string) string {
+	if strings.TrimSpace(label) == "" {
+		return responseText
+	}
+	return fmt.Sprintf("%s\n%s", label, responseText)
+}
+
 func aiPhase1OnlyActionPlan(plan aiActionPlan) aiActionPlan {
 	return aiActionPlan{
+		Profile:       plan.Profile,
 		Attributes:    append([]aiAttributeAction(nil), plan.Attributes...),
 		Advantages:    append([]aiNamedAction(nil), plan.Advantages...),
 		Disadvantages: append([]aiNamedAction(nil), plan.Disadvantages...),
@@ -163,6 +225,113 @@ func (d *aiChatDockable) resolveFilteredAIResponseText(responseText string, filt
 	return resolution, nil
 }
 
+func (d *aiChatDockable) recommendedTermsForLocalPhase(concept string, limits map[aiLibraryCategory]int) string {
+	catalog, err := d.aiLibraryCatalog()
+	if err != nil || catalog == nil {
+		return ""
+	}
+	return catalog.recommendedTermsForConcept(concept, limits)
+}
+
+func (d *aiChatDockable) executeLocalCorrectionLoop(endpoint, model, systemPrompt, phaseLabel string, resolution aiPlanResolutionResult, filter func(aiActionPlan) aiActionPlan) (aiPlanResolutionResult, error) {
+	current := resolution
+	if !current.Parsed || len(current.RetryItems) == 0 {
+		return current, nil
+	}
+	correctionWarnings := make([]string, 0, aiLocalCorrectionMaxPasses+1)
+	for pass := 1; pass <= aiLocalCorrectionMaxPasses && len(current.RetryItems) > 0; pass++ {
+		prompt := aiBuildLocalResolverAlternativePrompt(current.RetryItems)
+		responseText, err := aiLocalCorrectionQueryModel(d, endpoint, model, buildLocalStatelessMessages(systemPrompt, prompt), aiActionPlanJSONSchema())
+		if err != nil {
+			correctionWarnings = append(correctionWarnings, fmt.Sprintf(i18n.Text("%s correction pass %d could not query follow-up alternatives: %v"), phaseLabel, pass, err))
+			aiWriteResolverDebugLog("correction-pass",
+				fmt.Sprintf("phase=%q", phaseLabel),
+				fmt.Sprintf("pass=%d", pass),
+				"result=query-error",
+				fmt.Sprintf("remaining=%d", len(current.RetryItems)),
+			)
+			break
+		}
+		followUpResolution, resolveErr := aiLocalCorrectionResolveFiltered(d, responseText, filter)
+		if resolveErr != nil {
+			correctionWarnings = append(correctionWarnings, fmt.Sprintf(i18n.Text("%s correction pass %d could not resolve follow-up alternatives: %v"), phaseLabel, pass, resolveErr))
+			aiWriteResolverDebugLog("correction-pass",
+				fmt.Sprintf("phase=%q", phaseLabel),
+				fmt.Sprintf("pass=%d", pass),
+				"result=resolve-error",
+				fmt.Sprintf("remaining=%d", len(current.RetryItems)),
+			)
+			break
+		}
+		if !followUpResolution.Parsed {
+			correctionWarnings = append(correctionWarnings, fmt.Sprintf(i18n.Text("%s correction pass %d returned no parseable correction JSON."), phaseLabel, pass))
+			aiWriteResolverDebugLog("correction-pass",
+				fmt.Sprintf("phase=%q", phaseLabel),
+				fmt.Sprintf("pass=%d", pass),
+				"result=not-parsed",
+				fmt.Sprintf("remaining=%d", len(current.RetryItems)),
+			)
+			break
+		}
+		filteredFollowUpPlan := aiFilterCorrectionPlan(followUpResolution.Plan, current.RetryItems)
+		ignoredCorrections := aiActionPlanItemCount(followUpResolution.Plan) - aiActionPlanItemCount(filteredFollowUpPlan)
+		if ignoredCorrections > 0 {
+			correctionWarnings = append(correctionWarnings, fmt.Sprintf(i18n.Text("%s correction pass %d ignored %d unrelated correction entries."), phaseLabel, pass, ignoredCorrections))
+		}
+		followUpResolution.Plan = filteredFollowUpPlan
+
+		mergedPlan := aiActionPlanWithoutRetryItems(current.Plan, current.RetryItems)
+		mergeAIActionPlan(&mergedPlan, followUpResolution.Plan)
+		mergedPlan = filter(mergedPlan)
+		mergedResolution, err := aiLocalCorrectionResolvePlan(d, mergedPlan)
+		if err != nil {
+			return current, err
+		}
+		mergedResolution.Plan = mergedPlan
+
+		beforeRetryCount := len(current.RetryItems)
+		afterRetryCount := len(mergedResolution.RetryItems)
+		beforeResolvedCount := aiResolvedActionPlanCount(current.ResolvedPlan)
+		afterResolvedCount := aiResolvedActionPlanCount(mergedResolution.ResolvedPlan)
+		if afterRetryCount > beforeRetryCount || (afterRetryCount == beforeRetryCount && afterResolvedCount <= beforeResolvedCount) {
+			correctionWarnings = append(correctionWarnings, fmt.Sprintf(i18n.Text("%s correction pass %d made no progress and was stopped."), phaseLabel, pass))
+			aiWriteResolverDebugLog("correction-pass",
+				fmt.Sprintf("phase=%q", phaseLabel),
+				fmt.Sprintf("pass=%d", pass),
+				"result=no-progress",
+				fmt.Sprintf("before=%d", beforeRetryCount),
+				fmt.Sprintf("after=%d", afterRetryCount),
+			)
+			current = mergedResolution
+			break
+		}
+
+		progressMessage := fmt.Sprintf(i18n.Text("%s correction pass %d reduced unresolved items from %d to %d."), phaseLabel, pass, beforeRetryCount, afterRetryCount)
+		if afterRetryCount == beforeRetryCount {
+			progressMessage = fmt.Sprintf(i18n.Text("%s correction pass %d refined candidate selections but still has %d unresolved items."), phaseLabel, pass, afterRetryCount)
+		}
+		correctionWarnings = append(correctionWarnings, progressMessage)
+		aiWriteResolverDebugLog("correction-pass",
+			fmt.Sprintf("phase=%q", phaseLabel),
+			fmt.Sprintf("pass=%d", pass),
+			"result=progress",
+			fmt.Sprintf("before=%d", beforeRetryCount),
+			fmt.Sprintf("after=%d", afterRetryCount),
+		)
+		current = mergedResolution
+	}
+	current.Warnings = append(correctionWarnings, current.Warnings...)
+	if len(current.RetryItems) != 0 && aiRetryItemsContainPointBearingCategories(current.RetryItems) {
+		aiWriteResolverDebugLog("correction-pass",
+			fmt.Sprintf("phase=%q", phaseLabel),
+			"result=hard-stop",
+			fmt.Sprintf("remaining=%d", len(current.RetryItems)),
+		)
+		return current, fmt.Errorf(i18n.Text("%s still has unresolved point-bearing items after correction: %s"), phaseLabel, aiRetryItemsSummary(current.RetryItems))
+	}
+	return current, nil
+}
+
 func (d *aiChatDockable) applyLocalGenerationPhase(label, responseText string, resolution aiPlanResolutionResult, targetCP int) aiLocalGenerationPhaseApplyResult {
 	resultCh := make(chan aiLocalGenerationPhaseApplyResult, 1)
 	unison.InvokeTask(func() {
@@ -257,6 +426,8 @@ func (d *aiChatDockable) autoBalanceLocalGeneration(targetCP int) (before, after
 
 func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
 	targetCP := params.TotalCP
+	phase1Label := i18n.Text("Phase 1: Core Chassis")
+	phase2Label := i18n.Text("Phase 2: Professional Package")
 	phase1Summary, err := d.prepareLocalGenerationTarget(targetCP)
 	if err != nil {
 		unison.InvokeTask(func() {
@@ -265,7 +436,8 @@ func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, origi
 		return
 	}
 
-	phase1SystemPrompt, phase1UserPrompt := aiBuildLocalPhase1Prompts(originalPrompt, params, phase1Summary)
+	phase1RecommendedTerms := d.recommendedTermsForLocalPhase(params.Concept, aiPhase1RecommendedTermLimits)
+	phase1SystemPrompt, phase1UserPrompt := aiBuildLocalPhase1Prompts(originalPrompt, params, phase1Summary, phase1RecommendedTerms)
 	writeSystemPromptDebugFile(phase1SystemPrompt)
 	phase1Response, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(phase1SystemPrompt, phase1UserPrompt), aiActionPlanJSONSchema())
 	if err != nil {
@@ -282,7 +454,18 @@ func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, origi
 		})
 		return
 	}
-	phase1Apply := d.applyLocalGenerationPhase(i18n.Text("Phase 1: Core Chassis"), phase1Response, phase1Resolution, targetCP)
+	phase1Resolution, err = d.executeLocalCorrectionLoop(endpoint, model, phase1SystemPrompt, phase1Label, phase1Resolution, aiPhase1OnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", aiLocalPhaseMessage(phase1Label, phase1Response))
+			for _, warning := range phase1Resolution.Warnings {
+				d.addMessage("AI", warning)
+			}
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 1 could not continue: %v"), err))
+		})
+		return
+	}
+	phase1Apply := d.applyLocalGenerationPhase(phase1Label, phase1Response, phase1Resolution, targetCP)
 	if phase1Apply.Err != nil {
 		unison.InvokeTask(func() {
 			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 1 could not be applied: %v"), phase1Apply.Err))
@@ -292,7 +475,8 @@ func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, origi
 
 	remainingCP := phase1Apply.RemainingCP
 	if remainingCP > 0 {
-		phase2SystemPrompt, phase2UserPrompt := aiBuildLocalPhase2Prompts(originalPrompt, params, remainingCP, phase1Apply.Summary)
+		phase2RecommendedTerms := d.recommendedTermsForLocalPhase(params.Concept, aiPhase2RecommendedTermLimits)
+		phase2SystemPrompt, phase2UserPrompt := aiBuildLocalPhase2Prompts(originalPrompt, params, remainingCP, phase1Apply.Summary, phase2RecommendedTerms)
 		writeSystemPromptDebugFile(phase2SystemPrompt)
 		phase2Response, phase2Err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(phase2SystemPrompt, phase2UserPrompt), aiActionPlanJSONSchema())
 		if phase2Err != nil {
@@ -311,7 +495,20 @@ func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, origi
 			})
 			return
 		}
-		phase2Apply := d.applyLocalGenerationPhase(i18n.Text("Phase 2: Professional Package"), phase2Response, phase2Resolution, targetCP)
+		phase2Resolution, resolveErr = d.executeLocalCorrectionLoop(endpoint, model, phase2SystemPrompt, phase2Label, phase2Resolution, func(plan aiActionPlan) aiActionPlan {
+			return aiSnapSkillPointsInPlan(aiPhase2OnlyActionPlan(plan))
+		})
+		if resolveErr != nil {
+			unison.InvokeTask(func() {
+				d.addMessage("AI", aiLocalPhaseMessage(phase2Label, phase2Response))
+				for _, warning := range phase2Resolution.Warnings {
+					d.addMessage("AI", warning)
+				}
+				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 2 could not continue: %v"), resolveErr))
+			})
+			return
+		}
+		phase2Apply := d.applyLocalGenerationPhase(phase2Label, phase2Response, phase2Resolution, targetCP)
 		if phase2Apply.Err != nil {
 			unison.InvokeTask(func() {
 				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 2 could not be applied: %v"), phase2Apply.Err))

@@ -23,6 +23,25 @@ func TestAISettingsEnsureValidityPreservesExplicitEmptyAliases(t *testing.T) {
 	}
 }
 
+func TestAISettingsEffectiveGeminiModel(t *testing.T) {
+	var settings AISettings
+	if got := settings.EffectiveGeminiModel(); got != DefaultGeminiModel {
+		t.Fatalf("expected default Gemini model %q, got %q", DefaultGeminiModel, got)
+	}
+	settings.GeminiModel = " gemini-3.1-flash "
+	if got := settings.EffectiveGeminiModel(); got != "gemini-3.1-flash" {
+		t.Fatalf("expected configured Gemini model to be trimmed, got %q", got)
+	}
+	settings.GeminiModel = " gemini-3.1-pro "
+	if got := settings.EffectiveGeminiModel(); got != DefaultGeminiModel {
+		t.Fatalf("expected Gemini 3.1 Pro alias to normalize to %q, got %q", DefaultGeminiModel, got)
+	}
+	settings.GeminiModel = " models/gemini-pro "
+	if got := settings.EffectiveGeminiModel(); got != FallbackGeminiModel {
+		t.Fatalf("expected legacy gemini-pro alias to normalize to %q, got %q", FallbackGeminiModel, got)
+	}
+}
+
 func TestSaveAndLoadAIResolverAliases(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "custom"+AIResolverAliasesExt)

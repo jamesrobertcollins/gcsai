@@ -17,8 +17,9 @@ func TestAddOrUpdateSkillUsesPendingSkillList(t *testing.T) {
 
 	var dockable aiChatDockable
 	updatedSkills, warning, retryItem, err := dockable.addOrUpdateSkill(entity, workingSkills, aiSkillAction{
-		Name:   aiFlexibleString("Mechanic (Automobile)"),
-		Points: aiFlexibleString("4"),
+		Name:        aiFlexibleString("Mechanic (Automobile)"),
+		Description: aiFlexibleString("Keeps engines running with improvised spare parts."),
+		Points:      aiFlexibleString("4"),
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -37,6 +38,9 @@ func TestAddOrUpdateSkillUsesPendingSkillList(t *testing.T) {
 	}
 	if existing.Points != fxp.FromInteger(4) {
 		t.Fatalf("expected existing skill points to update to 4, got %v", existing.Points)
+	}
+	if existing.LocalNotes != "Keeps engines running with improvised spare parts." {
+		t.Fatalf("expected existing skill description to persist in local notes, got %q", existing.LocalNotes)
 	}
 	if len(entity.Skills) != 0 {
 		t.Fatalf("expected entity skills to remain uncommitted during update, got %d", len(entity.Skills))

@@ -64,7 +64,10 @@ Do not invent database ids. Leave the "id" field empty unless you are certain.
 Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
 If a fixed specialization is part of the canonical library name, include it in "name". Example: "Driving (Automobile)".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item. Example: "Area Knowledge" with notes "Mesa".
-Do not create custom equipment or custom abilities.
+Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
+Do not invent non-library advantages, disadvantages, skills, or equipment names.
+If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
+Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
 For attributes, use only attribute ids that already exist on the current character sheet summary above when updating an existing sheet. Do not invent ids such as BX.
 If no sheet is active, say so plainly; the application can create one when applying changes.
 On your first response to a character-build request, do not stop after only name, title, or other minimal profile data.
@@ -78,10 +81,10 @@ Below is an EXAMPLE. Do not reuse the example content; it is only a formatting r
 Keys:
 - profile: {"name":"John Smith","gender":"M","age":"25","height":"5'10\"","weight":"180 lbs","hair":"brown","eyes":"blue","skin":"fair","handedness":"Right","title":"Adventurer","organization":"","religion":"","tech_level":"3"}
 - attributes: [{"id":"ST","value":"12"}]
-- advantages: [{"name":"Combat Reflexes","points":"15"}]
+- advantages: [{"name":"Signature Gear","description":"Groucho: A sentient magical hammer with a soul.","points":"5"}]
 - disadvantages: [{"name":"Code of Honor","notes":"Honor among thieves","points":"-10"}]
 - quirks: [{"name":"Must make an entrance","notes":"with Groucho","points":"-1"}]
-- skills: [{"name":"Brawling","points":"4"}]
+- skills: [{"name":"Area Knowledge","notes":"Mesa","points":"2"}]
 - equipment: [{"name":"Leather Armor","quantity":1}]
 - spend_all_cp: true
 
@@ -405,7 +408,10 @@ Do not invent database ids. Leave the "id" field empty unless you are certain.
 Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
 If a fixed specialization is part of the canonical library name, include it in "name". Example: "Driving (Automobile)".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item. Example: "Area Knowledge" with notes "Mesa".
-Do not create custom equipment or custom abilities.
+Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
+Do not invent non-library advantages, disadvantages, skills, or equipment names.
+If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
+Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
 For attributes, use only attribute ids that already exist on the current character sheet summary above when updating an existing sheet. Do not invent ids such as BX.
 If you include JSON, return exactly one top-level JSON object for the entire update.
 Do not split updates across multiple JSON objects.
@@ -528,14 +534,27 @@ func aiBuildContinuationUserPrompt(request string, params aiCharacterRequestPara
 	return builder.String()
 }
 
-func aiBuildLocalPhase1Prompts(originalRequest string, params aiCharacterRequestParams, summary string) (systemPrompt, userPrompt string) {
+func aiRecommendedTermsPromptBlock(recommendedTerms string) string {
+	recommendedTerms = strings.TrimSpace(recommendedTerms)
+	if recommendedTerms == "" {
+		return ""
+	}
+	return recommendedTerms + "\nStrongly prefer selecting items from this list when they fit the concept.\n\n"
+}
+
+func aiBuildLocalPhase1Prompts(originalRequest string, params aiCharacterRequestParams, summary, recommendedTerms string) (systemPrompt, userPrompt string) {
+	recommendedTermsBlock := aiRecommendedTermsPromptBlock(recommendedTerms)
 	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e JSON generation function.
 Return exactly one top-level JSON object and nothing else.
 The Go application will resolve library entries, compute exact point totals, and perform final balancing after you respond.
 Use canonical GURPS Fourth Edition names. Leave the "id" field empty unless you are certain.
 If a fixed specialization is part of the canonical library name, include it in "name".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
-Do not create custom equipment or custom abilities.
+Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
+Do not invent non-library advantages, disadvantages, skills, or equipment names.
+If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
+Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
+For a fresh build, include a credible profile block when it helps complete the concept. Prefer setting name, title, age, gender, height, weight, and other obvious identity details when you can infer them reasonably.
 
 Current character sheet context:
 %s`, summary))
@@ -547,13 +566,15 @@ Target total budget: exactly %d CP.
 Tech Level: TL %s.
 Disadvantage limit: up to %d points.
 
-This phase may output ONLY these JSON fields:
+%sThis phase may output ONLY these JSON fields:
+- profile
 - attributes
 - advantages
 - disadvantages
 - quirks
 
-Do not include profile, skills, equipment, or spend_all_cp in this phase.
+Do not include skills, equipment, or spend_all_cp in this phase.
+For a fresh build, include profile fields that materially complete the concept. Prefer setting a name plus age, gender, height, weight, eyes, hair, skin, handedness, and title when you can infer them reasonably.
 
 Budget guidance for this chassis phase:
 - Spend roughly 40-50%% of the total budget on attributes and secondary characteristics.
@@ -561,19 +582,23 @@ Budget guidance for this chassis phase:
 - Use up to %d points in disadvantages that fit the concept.
 - Include exactly 5 quirks when the concept supports them.
 - Leave enough budget for a large Phase 2 skill package.
+- If the concept includes a magical, signature, or supernatural item, model it here through canonical advantages, disadvantages, or quirks and put the lore in "description".
 
-Build a strong mechanical chassis for the concept and return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, params.DisadvantageLimit))
+Build a strong mechanical chassis for the concept and return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, recommendedTermsBlock, params.DisadvantageLimit))
 	return systemPrompt, userPrompt
 }
 
-func aiBuildLocalPhase2Prompts(originalRequest string, params aiCharacterRequestParams, remainingCP int, summary string) (systemPrompt, userPrompt string) {
+func aiBuildLocalPhase2Prompts(originalRequest string, params aiCharacterRequestParams, remainingCP int, summary, recommendedTerms string) (systemPrompt, userPrompt string) {
+	recommendedTermsBlock := aiRecommendedTermsPromptBlock(recommendedTerms)
 	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e JSON generation function.
 Return exactly one top-level JSON object and nothing else.
 The Go application will resolve library entries, snap skill points to valid GURPS 4e values, and perform final balancing after you respond.
 Use canonical GURPS Fourth Edition names. Leave the "id" field empty unless you are certain.
 If a fixed specialization is part of the canonical library name, include it in "name".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
-Do not create custom equipment or custom abilities.
+Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
+Do not invent non-library advantages, disadvantages, skills, or equipment names.
+Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
 
 Current character sheet context:
 %s`, summary))
@@ -585,7 +610,7 @@ Target total budget: exactly %d CP.
 Tech Level: TL %s.
 Exactly %d CP remain after Phase 1.
 
-This phase may output ONLY these JSON fields:
+%sThis phase may output ONLY these JSON fields:
 - skills
 - equipment
 
@@ -595,8 +620,10 @@ Instructions:
 - Spend all remaining character points on an expansive, concept-appropriate list of skills.
 - Equipment may be included when relevant, but the Go application handles CP math; focus your budgeting on skills.
 - Prefer a broad professional package with occupational, background, hobby, and practical skills, not just a few headline combat skills.
+- Avoid padding the build with multiple near-duplicate skill-family variants. In most concepts, choose at most one variant each of Area Knowledge, Current Affairs, Connoisseur, Savoir-Faire, Expert Skill, Hobby Skill, and similar broad families unless the concept clearly requires more.
 - Use integer skill point requests that reflect intended emphasis. The Go application will snap them to valid GURPS 4e point costs.
+- Only include equipment when it resolves to a real library item. If the concept's special item is primarily magical or signature, keep that concept on the trait side and use "description" there instead of inventing equipment.
 
-Return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, remainingCP))
+Return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, remainingCP, recommendedTermsBlock))
 	return systemPrompt, userPrompt
 }

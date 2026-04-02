@@ -1,0 +1,54 @@
+{
+  "entries": [
+    {
+      "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
+      "kind": "correction-pass",
+      "count": 15,
+      "last_seen": "2026-04-02T09:46:54.9823712Z",
+      "fields": [
+        "phase=\"Phase 1\"",
+        "pass=1",
+        "result=no-progress",
+        "before=1",
+        "after=1"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fresult=hard-stop\u001fremaining=1",
+      "kind": "correction-pass",
+      "count": 15,
+      "last_seen": "2026-04-02T09:46:54.9828703Z",
+      "fields": [
+        "phase=\"Phase 1\"",
+        "result=hard-stop",
+        "remaining=1"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fpass=1\u001fresult=progress\u001fbefore=1\u001fafter=0",
+      "kind": "correction-pass",
+      "count": 10,
+      "last_seen": "2026-04-02T09:46:54.9793714Z",
+      "fields": [
+        "phase=\"Phase 1\"",
+        "pass=1",
+        "result=progress",
+        "before=1",
+        "after=0"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Phase 2\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
+      "kind": "correction-pass",
+      "count": 10,
+      "last_seen": "2026-04-02T09:46:54.9813708Z",
+      "fields": [
+        "phase=\"Phase 2\"",
+        "pass=1",
+        "result=no-progress",
+        "before=1",
+        "after=1"
+      ]
+    }
+  ]
+}

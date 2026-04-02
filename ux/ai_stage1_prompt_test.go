@@ -169,19 +169,25 @@ func TestAIBuildLocalPhase1Prompts(t *testing.T) {
 		"Build a 200-point TL8 detective.",
 		aiCharacterRequestParams{TotalCP: 200, TechLevel: "8", Concept: "detective", DisadvantageLimit: 50},
 		"No active GURPS sheet is open.",
+		"Recommended Canonical GURPS Terms:\n- Advantages: Signature Gear, Blessed",
 	)
 	checks := []string{
 		"deterministic GURPS 4e JSON generation function",
 		"No active GURPS sheet is open.",
 		"Phase 1: The Core Chassis.",
+		"Recommended Canonical GURPS Terms:",
+		"Strongly prefer selecting items from this list when they fit the concept.",
 		"ONLY these JSON fields",
+		"profile",
 		"attributes",
 		"advantages",
 		"disadvantages",
 		"quirks",
+		"include a credible profile block",
 		"40-50%",
 		"15-25%",
 		"up to 50 points in disadvantages",
+		"Use \"description\" for lore, behavior, magical effects, and special handling notes.",
 	}
 	combined := systemPrompt + "\n" + userPrompt
 	for _, check := range checks {
@@ -197,16 +203,21 @@ func TestAIBuildLocalPhase2Prompts(t *testing.T) {
 		aiCharacterRequestParams{TotalCP: 200, TechLevel: "8", Concept: "detective", DisadvantageLimit: 50},
 		73,
 		"Current character concept: detective",
+		"Recommended Canonical GURPS Terms:\n- Skills: Criminology, Observation\n- Equipment: Lockpicks",
 	)
 	checks := []string{
 		"deterministic GURPS 4e JSON generation function",
 		"Current character concept: detective",
 		"Phase 2: The Professional Package.",
 		"Exactly 73 CP remain after Phase 1.",
+		"Recommended Canonical GURPS Terms:",
+		"Strongly prefer selecting items from this list when they fit the concept.",
 		"ONLY these JSON fields",
 		"skills",
 		"equipment",
+		"Avoid padding the build with multiple near-duplicate skill-family variants",
 		"snap them to valid GURPS 4e point costs",
+		"Only include an equipment entry when it matches a real library item",
 	}
 	combined := systemPrompt + "\n" + userPrompt
 	for _, check := range checks {

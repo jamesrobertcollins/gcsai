@@ -22,6 +22,13 @@ import (
 // AIResolverAliasesExt is the file extension for exported AI resolver alias mappings.
 const AIResolverAliasesExt = ".aliases"
 
+const (
+	// DefaultGeminiModel is the Gemini model used when none has been configured.
+	DefaultGeminiModel = "gemini-3.1-pro-preview"
+	// FallbackGeminiModel is the stable fallback used when the preferred Gemini model is unavailable.
+	FallbackGeminiModel = "gemini-2.5-pro"
+)
+
 // AIProvider is the type for the AI provider.
 type AIProvider string
 
@@ -83,6 +90,7 @@ func (a AIProvider) String() string {
 type AISettings struct {
 	Provider        AIProvider                   `json:"provider,omitempty"`
 	GeminiAPIKey    string                       `json:"gemini_api_key,omitempty"`
+	GeminiModel     string                       `json:"gemini_model,omitempty"`
 	LocalServerURL  string                       `json:"local_server_url,omitempty"`
 	LocalModel      string                       `json:"local_model,omitempty"`
 	ResolverAliases map[string]map[string]string `json:"resolver_aliases"`
@@ -92,6 +100,7 @@ type AISettings struct {
 func (a AISettings) IsZero() bool {
 	return a.Provider == AIProviderNone &&
 		strings.TrimSpace(a.GeminiAPIKey) == "" &&
+		strings.TrimSpace(a.GeminiModel) == "" &&
 		strings.TrimSpace(a.LocalServerURL) == "" &&
 		strings.TrimSpace(a.LocalModel) == "" &&
 		a.ResolverAliases == nil
@@ -101,6 +110,7 @@ func (a AISettings) IsZero() bool {
 func (a AISettings) Hash(h hash.Hash) {
 	xhash.StringWithLen(h, string(a.Provider))
 	xhash.StringWithLen(h, a.GeminiAPIKey)
+	xhash.StringWithLen(h, a.GeminiModel)
 	xhash.StringWithLen(h, a.LocalServerURL)
 	xhash.StringWithLen(h, a.LocalModel)
 	categories := make([]string, 0, len(a.ResolverAliases))
@@ -121,6 +131,33 @@ func (a AISettings) Hash(h hash.Hash) {
 			xhash.StringWithLen(h, aliases[alias])
 		}
 	}
+}
+
+// EffectiveGeminiModel returns the configured Gemini model or the default one.
+func (a AISettings) EffectiveGeminiModel() string {
+	if model := normalizeGeminiModelName(a.GeminiModel); model != "" {
+		return model
+	}
+	return DefaultGeminiModel
+}
+
+func normalizeGeminiModelName(model string) string {
+	model = strings.TrimSpace(model)
+	model = strings.TrimPrefix(model, "models/")
+	if model == "" {
+		return ""
+	}
+	switch strings.ToLower(model) {
+	case "gemini-pro":
+		return FallbackGeminiModel
+	case "gemini-3-pro", "gemini-3-pro-preview":
+		return DefaultGeminiModel
+	case "gemini-3.1-pro":
+		return DefaultGeminiModel
+	case "gemini-3.1-pro-preview":
+		return DefaultGeminiModel
+	}
+	return model
 }
 
 func normalizeAIResolverAliases(aliases map[string]map[string]string) map[string]map[string]string {
