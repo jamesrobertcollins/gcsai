@@ -1,177 +1,28 @@
 {
   "entries": [
     {
-      "signature": "alias-hit\u001fcategory=skills\u001finput=\"Knife Fighting\"\u001fmapped=\"Knife\"",
-      "kind": "alias-hit",
-      "count": 6,
-      "last_seen": "2026-04-02T02:33:53.2946942Z",
-      "fields": [
-        "category=skills",
-        "input=\"Knife Fighting\"",
-        "mapped=\"Knife\""
-      ]
-    },
-    {
-      "signature": "alias-hit\u001fcategory=skills\u001finput=\"Gunnery\"\u001fmapped=\"Gunner\"",
-      "kind": "alias-hit",
-      "count": 4,
-      "last_seen": "2026-04-02T02:31:06.4951778Z",
-      "fields": [
-        "category=skills",
-        "input=\"Gunnery\"",
-        "mapped=\"Gunner\""
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Magical Hammer Attachment\"\u001fnotes=\"Groucho is a magical hammer with a soul inside\"\u001fpoints=\"-10\"\u001fcandidates=[tl4uZFj9TMdpKzMaG:Dishonest Face, tH2ZdsCgKA5I6bCR7:Impatient, t90_VroM128_RSckF:Aches and Pains, tD5y-MMRYGgB-6oXS:Admiration, tr9glxq2nMhYbnWCa:Admiration]",
-      "kind": "unresolved",
-      "count": 4,
-      "last_seen": "2026-04-02T02:14:43.1665195Z",
-      "fields": [
-        "category=quirks",
-        "input=\"Magical Hammer Attachment\"",
-        "notes=\"Groucho is a magical hammer with a soul inside\"",
-        "points=\"-10\"",
-        "candidates=[tl4uZFj9TMdpKzMaG:Dishonest Face, tH2ZdsCgKA5I6bCR7:Impatient, t90_VroM128_RSckF:Aches and Pains, tD5y-MMRYGgB-6oXS:Admiration, tr9glxq2nMhYbnWCa:Admiration]"
-      ]
-    },
-    {
-      "signature": "alias-hit\u001fcategory=skills\u001finput=\"Gunnery\"\u001fmapped=\"Guns\"",
-      "kind": "alias-hit",
-      "count": 2,
-      "last_seen": "2026-04-02T02:33:53.2841898Z",
-      "fields": [
-        "category=skills",
-        "input=\"Gunnery\"",
-        "mapped=\"Guns\""
-      ]
-    },
-    {
-      "signature": "alias-hit\u001fcategory=skills\u001finput=\"Shotgun\"\u001fmapped=\"Guns (Shotgun)\"",
-      "kind": "alias-hit",
-      "count": 2,
-      "last_seen": "2026-04-02T02:33:53.2976941Z",
-      "fields": [
-        "category=skills",
-        "input=\"Shotgun\"",
-        "mapped=\"Guns (Shotgun)\""
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Extra Damage 2 (Deadites)\"\u001fnotes=\"Groucho's special ability\"\u001fpoints=\"20\"\u001fcandidates=[tCwzwYfDUhYJaZGzW:Extra Fatigue Points, tc_lZmrGI_geAEr0s:Extra Option, Secret Material, tVn3lzGhC2AEnH6EO:Alternate Identity, tx8GtwFXIhrspI-Kt:Better Magic Items, tLp4-Pz2GWlwpKH5i:One-Armed Bandit]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:14:10.1159106Z",
-      "fields": [
-        "category=advantages",
-        "input=\"Extra Damage 2 (Deadites)\"",
-        "notes=\"Groucho's special ability\"",
-        "points=\"20\"",
-        "candidates=[tCwzwYfDUhYJaZGzW:Extra Fatigue Points, tc_lZmrGI_geAEr0s:Extra Option, Secret Material, tVn3lzGhC2AEnH6EO:Alternate Identity, tx8GtwFXIhrspI-Kt:Better Magic Items, tLp4-Pz2GWlwpKH5i:One-Armed Bandit]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Magical Attack\"\u001fnotes=\"Groucho's magical properties\"\u001fpoints=\"30\"\u001fcandidates=[tHNB-mN-O6Jhu2fpF:Extra Attack, tU0G2QZkbxa_y4NrE:Magical Bolt 1, t7rJYglHeMG8bw_0n:Magical Bolt 2, tBMqISOOeSZftD8RG:Magical Bolt 3, taQL_VFbKmxm2LfXO:Magical Bolt 4]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:14:10.1249099Z",
-      "fields": [
-        "category=advantages",
-        "input=\"Magical Attack\"",
-        "notes=\"Groucho's magical properties\"",
-        "points=\"30\"",
-        "candidates=[tHNB-mN-O6Jhu2fpF:Extra Attack, tU0G2QZkbxa_y4NrE:Magical Bolt 1, t7rJYglHeMG8bw_0n:Magical Bolt 2, tBMqISOOeSZftD8RG:Magical Bolt 3, taQL_VFbKmxm2LfXO:Magical Bolt 4]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Magical Resistance\"\u001fnotes=\"Resistance to magic damage from Groucho\"\u001fpoints=\"15\"\u001fcandidates=[t8-8PjTRWw_ogqdtD:Magic Resistance, t9PO8-hSRQKQ1bxwX:Chi Resistance, tvvvlOJbsVe17dnBR:Chi Resistance, t5mBiqmqx4JwBUmk6:Damage Resistance, tTFq8aNrmIJ4NLUD2:Elixir Resistance]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:14:10.1339095Z",
-      "fields": [
-        "category=advantages",
-        "input=\"Magical Resistance\"",
-        "notes=\"Resistance to magic damage from Groucho\"",
-        "points=\"15\"",
-        "candidates=[t8-8PjTRWw_ogqdtD:Magic Resistance, t9PO8-hSRQKQ1bxwX:Chi Resistance, tvvvlOJbsVe17dnBR:Chi Resistance, t5mBiqmqx4JwBUmk6:Damage Resistance, tTFq8aNrmIJ4NLUD2:Elixir Resistance]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Magical Voice\"\u001fnotes=\"Thomas can hear Groucho's voice\"\u001fpoints=\"10\"\u001fcandidates=[t2HZpxc_oP9VgTgsM:Musical Voice, tU0G2QZkbxa_y4NrE:Magical Bolt 1, t7rJYglHeMG8bw_0n:Magical Bolt 2, tBMqISOOeSZftD8RG:Magical Bolt 3, taQL_VFbKmxm2LfXO:Magical Bolt 4]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:14:10.1444109Z",
-      "fields": [
-        "category=advantages",
-        "input=\"Magical Voice\"",
-        "notes=\"Thomas can hear Groucho's voice\"",
-        "points=\"10\"",
-        "candidates=[t2HZpxc_oP9VgTgsM:Musical Voice, tU0G2QZkbxa_y4NrE:Magical Bolt 1, t7rJYglHeMG8bw_0n:Magical Bolt 2, tBMqISOOeSZftD8RG:Magical Bolt 3, taQL_VFbKmxm2LfXO:Magical Bolt 4]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=disadvantages\u001finput=\"Code of Honor (Deadites)\"\u001fnotes=\"Thomas feels compelled to kill Deadites\"\u001fpoints=\"-20\"\u001fcandidates=[tDbjYCiiVYSi1S2lW:Code of Honor (Pirate's), tWdFHLHV70NbpG6c7:Code of Honor (Soldier's), ttQu2G8GZKcfh_9M1:Code of Honor (Dark Jedi’s), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:14:10.1489086Z",
-      "fields": [
-        "category=disadvantages",
-        "input=\"Code of Honor (Deadites)\"",
-        "notes=\"Thomas feels compelled to kill Deadites\"",
-        "points=\"-20\"",
-        "candidates=[tDbjYCiiVYSi1S2lW:Code of Honor (Pirate's), tWdFHLHV70NbpG6c7:Code of Honor (Soldier's), ttQu2G8GZKcfh_9M1:Code of Honor (Dark Jedi’s), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Magical Item\"\u001fnotes=\"Groucho is a magical hammer with a soul inside\"\u001fpoints=\"-10\"\u001fcandidates=[t4slIFEFLKoDYazcy:Imaginative, tPwuEVY8o8AtpEzJQ:Likes @Item@, ttqnfrHKDbGZ9MoUO:Practical Joker, tid4e6X7ckyvY_UJQ:Dislikes @Item@, tcpX_c6Lrk2htI5Ds:Complicated]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:10:58.2475728Z",
-      "fields": [
-        "category=quirks",
-        "input=\"Magical Item\"",
-        "notes=\"Groucho is a magical hammer with a soul inside\"",
-        "points=\"-10\"",
-        "candidates=[t4slIFEFLKoDYazcy:Imaginative, tPwuEVY8o8AtpEzJQ:Likes @Item@, ttqnfrHKDbGZ9MoUO:Practical Joker, tid4e6X7ckyvY_UJQ:Dislikes @Item@, tcpX_c6Lrk2htI5Ds:Complicated]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=skills\u001finput=\"Gunnery\"\u001flookup=\"Gunner\"\u001fnotes=\"Shotgun\"\u001fpoints=\"4\"\u001fcandidates=[snZtm1wwlLIeerPuO:Gunner, sjK8BCt1CDjHgw_Bz:Gunner (Beams), s2Mgqd_ErQXtoawwB:Gunner (Cannon), sgv3pJyDOE7nsqQyb:Gunner (Rockets), sBDhJkhuBct_nlrfG:Gunner (Catapult)]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:31:06.502181Z",
-      "fields": [
-        "category=skills",
-        "input=\"Gunnery\"",
-        "lookup=\"Gunner\"",
-        "notes=\"Shotgun\"",
-        "points=\"4\"",
-        "candidates=[snZtm1wwlLIeerPuO:Gunner, sjK8BCt1CDjHgw_Bz:Gunner (Beams), s2Mgqd_ErQXtoawwB:Gunner (Cannon), sgv3pJyDOE7nsqQyb:Gunner (Rockets), sBDhJkhuBct_nlrfG:Gunner (Catapult)]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=skills\u001finput=\"Gunnery\"\u001flookup=\"Gunner\"\u001fpoints=\"4\"\u001fcandidates=[snZtm1wwlLIeerPuO:Gunner, sjK8BCt1CDjHgw_Bz:Gunner (Beams), s2Mgqd_ErQXtoawwB:Gunner (Cannon), sgv3pJyDOE7nsqQyb:Gunner (Rockets), sBDhJkhuBct_nlrfG:Gunner (Catapult)]",
-      "kind": "unresolved",
-      "count": 2,
-      "last_seen": "2026-04-02T02:31:06.4876798Z",
-      "fields": [
-        "category=skills",
-        "input=\"Gunnery\"",
-        "lookup=\"Gunner\"",
-        "points=\"4\"",
-        "candidates=[snZtm1wwlLIeerPuO:Gunner, sjK8BCt1CDjHgw_Bz:Gunner (Beams), s2Mgqd_ErQXtoawwB:Gunner (Cannon), sgv3pJyDOE7nsqQyb:Gunner (Rockets), sBDhJkhuBct_nlrfG:Gunner (Catapult)]"
-      ]
-    },
-    {
-      "signature": "unresolved\u001fcategory=skills\u001finput=\"Shotgun\"\u001fpoints=\"4\"\u001fcandidates=[sFv-HqFH4QW3yQGAF:Guns (Shotgun), qDwKWSS1VpfVOBkGw:Sharp Turn, qWgMGzjqWBgFO1-D2:Shoot Over Mount, sj_NQ82cEhbx7gj3m:Shooter!, s_gGjEwprUS9RkC-J:Gun Sport (Shotgun)]",
+      "signature": "unresolved\u001fcategory=equipment\u001finput=\"67 Chevy Impala (TL8)\"\u001fnotes=\"Armor plating around engine bay\"\u001fpoints=\"10\"\u001fcandidates=[e1pQxdsvzPc7flzCu:Chimera, eCygviMRUr5QKn6kN:Hive Implant, e5hyBOZwhNTYAhG2R:Mace, Small, eKw6D5EO_-AkM4coQ:Mail, Heavy Coif, Padded, e4BOR91K900BUTeHw:Neurotherapy Implant]",
       "kind": "unresolved",
       "count": 1,
-      "last_seen": "2026-04-02T02:30:58.0664445Z",
+      "last_seen": "2026-04-02T02:52:18.93292Z",
       "fields": [
-        "category=skills",
-        "input=\"Shotgun\"",
-        "points=\"4\"",
-        "candidates=[sFv-HqFH4QW3yQGAF:Guns (Shotgun), qDwKWSS1VpfVOBkGw:Sharp Turn, qWgMGzjqWBgFO1-D2:Shoot Over Mount, sj_NQ82cEhbx7gj3m:Shooter!, s_gGjEwprUS9RkC-J:Gun Sport (Shotgun)]"
+        "category=equipment",
+        "input=\"67 Chevy Impala (TL8)\"",
+        "notes=\"Armor plating around engine bay\"",
+        "points=\"10\"",
+        "candidates=[e1pQxdsvzPc7flzCu:Chimera, eCygviMRUr5QKn6kN:Hive Implant, e5hyBOZwhNTYAhG2R:Mace, Small, eKw6D5EO_-AkM4coQ:Mail, Heavy Coif, Padded, e4BOR91K900BUTeHw:Neurotherapy Implant]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=equipment\u001finput=\"Knife\"\u001fpoints=\"1\"\u001fcandidates=[e1ESuwpc4Sldq09pE:Hobo Knife, e2nWZSbk5ADtbp5FG:Long Knife, eIs-Gf0Fu3SVMXgXg:Push Knife, eGLJMFpXCmVBJBNOm:Fife, eMtlVpfRhVRfy5xcI:Kite]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-02T02:52:18.9659483Z",
+      "fields": [
+        "category=equipment",
+        "input=\"Knife\"",
+        "points=\"1\"",
+        "candidates=[e1ESuwpc4Sldq09pE:Hobo Knife, e2nWZSbk5ADtbp5FG:Long Knife, eIs-Gf0Fu3SVMXgXg:Push Knife, eGLJMFpXCmVBJBNOm:Fife, eMtlVpfRhVRfy5xcI:Kite]"
       ]
     }
   ]

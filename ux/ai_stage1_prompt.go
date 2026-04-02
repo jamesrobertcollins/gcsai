@@ -24,6 +24,18 @@ type aiStage1SystemPromptData struct {
 	Summary string
 }
 
+type aiBuildSessionContext struct {
+	OriginalRequest string
+	Params          aiCharacterRequestParams
+}
+
+type aiPreparedChatRequest struct {
+	SystemPrompt   string
+	UserPrompt     string
+	BuildParams    aiCharacterRequestParams
+	IsInitialBuild bool
+}
+
 var (
 	aiStage1SystemPromptTemplate = template.Must(template.New("ai-stage1-system-prompt").Parse(`You are an expert GURPS 4e Game Master. Your task is to generate a robust, fully fleshed-out character based on the following concept: [{{.Concept}}].
 
@@ -105,12 +117,15 @@ When responding outside JSON, keep the answer concise, factual, and directly tie
 		regexp.MustCompile(`(?i)\bTL\s*[0-9]+(?:\^[0-9]+)?(?:/[0-9]+)?\b`),
 		regexp.MustCompile(`(?i)\btech(?:nology)? level\s*[:=]?\s*[0-9]+(?:\^[0-9]+)?(?:/[0-9]+)?\b`),
 	}
-	aiStage1GenerationVerbPattern   = regexp.MustCompile(`(?i)\b(?:create|build|generate|make|design|draft)\b`)
-	aiStage1CharacterHintPattern    = regexp.MustCompile(`(?i)\b(?:character|pc|npc|hero|adventurer|detective|knight|wizard|soldier|thief|merchant|swashbuckler|investigator|template)\b`)
-	aiStage1BudgetExclusionPattern  = regexp.MustCompile(`(?i)\b(?:disadvantages?|quirks?|advantages?|skills?|spells?|perks?)\b`)
-	aiStage1BudgetPrefixPattern     = regexp.MustCompile(`(?i)(?:disadvantages?|quirks?|advantages?|skills?|spells?|perks?)(?:\s+(?:limit|limits|cap|capped|maximum|worth|total|totaling|up|to|of|in|at)){0,3}\s*$`)
-	aiStage1ConnectorCleanupPattern = regexp.MustCompile(`(?i)\b(?:for|in|using|with)\s*$`)
-	aiStage1WhitespacePattern       = regexp.MustCompile(`\s+`)
+	aiStage1GenerationVerbPattern       = regexp.MustCompile(`(?i)\b(?:create|build|generate|make|design|draft)\b`)
+	aiStage1CharacterHintPattern        = regexp.MustCompile(`(?i)\b(?:character|pc|npc|hero|adventurer|detective|knight|wizard|soldier|thief|merchant|swashbuckler|investigator|template)\b`)
+	aiStage1BudgetExclusionPattern      = regexp.MustCompile(`(?i)\b(?:disadvantages?|quirks?|advantages?|skills?|spells?|perks?)\b`)
+	aiStage1BudgetPrefixPattern         = regexp.MustCompile(`(?i)(?:disadvantages?|quirks?|advantages?|skills?|spells?|perks?)(?:\s+(?:limit|limits|cap|capped|maximum|worth|total|totaling|up|to|of|in|at)){0,3}\s*$`)
+	aiStage1ConnectorCleanupPattern     = regexp.MustCompile(`(?i)\b(?:for|in|using|with)\s*$`)
+	aiStage1WhitespacePattern           = regexp.MustCompile(`\s+`)
+	aiBuildContinuationVerbPattern      = regexp.MustCompile(`(?i)\b(?:add|give|include|pick|choose|apply|continue|finish|complete|expand|fill(?:\s+out)?|spend|use)\b`)
+	aiBuildContinuationCategoryPattern  = regexp.MustCompile(`(?i)\b(?:advantages?|disadvantages?|quirks?|skills?|attributes?|equipment|gear|traits?|profile)\b`)
+	aiBuildContinuationRemainingPattern = regexp.MustCompile(`(?i)\b(?:remaining|rest|left|leftover|unspent)\b`)
 )
 
 func aiRenderStage1SystemPrompt(data aiStage1SystemPromptData) string {
@@ -312,11 +327,91 @@ func (d *aiChatDockable) aiSystemPromptForRequest(request string) string {
 	return d.aiAssistantSystemPrompt()
 }
 
+func aiShouldUseBuildContinuationPrompt(request string) bool {
+	request = strings.TrimSpace(request)
+	if request == "" || aiShouldUseDynamicStage1Prompt(request, false) {
+		return false
+	}
+	if strings.Contains(request, "?") && !aiBuildContinuationCategoryPattern.MatchString(request) && !aiBuildContinuationRemainingPattern.MatchString(request) {
+		return false
+	}
+	if aiBuildContinuationRemainingPattern.MatchString(request) {
+		return true
+	}
+	if aiBuildContinuationVerbPattern.MatchString(request) && (aiBuildContinuationCategoryPattern.MatchString(request) || len(strings.Fields(request)) <= 8) {
+		return true
+	}
+	return aiBuildContinuationCategoryPattern.MatchString(request) && len(strings.Fields(request)) <= 6
+}
+
+func (d *aiChatDockable) prepareAIRequest(request string) aiPreparedChatRequest {
+	request = strings.TrimSpace(request)
+	if aiShouldUseDynamicStage1Prompt(request, len(d.chatHistory) != 0) {
+		params := aiExtractCharacterRequestParams(request, d.aiDefaultCharacterRequestParams(request))
+		d.buildSession = &aiBuildSessionContext{OriginalRequest: request, Params: params}
+		return aiPreparedChatRequest{
+			SystemPrompt:   d.aiStage1SystemPrompt(request),
+			UserPrompt:     request,
+			BuildParams:    params,
+			IsInitialBuild: true,
+		}
+	}
+	if d.buildSession != nil && aiShouldUseBuildContinuationPrompt(request) {
+		return aiPreparedChatRequest{
+			SystemPrompt: d.aiBuildContinuationSystemPrompt(request, d.buildSession.Params),
+			UserPrompt:   aiBuildContinuationUserPrompt(request, d.buildSession.Params),
+			BuildParams:  d.buildSession.Params,
+		}
+	}
+	return aiPreparedChatRequest{
+		SystemPrompt: d.aiAssistantSystemPrompt(),
+		UserPrompt:   request,
+		BuildParams:  d.aiDefaultCharacterRequestParams(request),
+	}
+}
+
 func (d *aiChatDockable) aiStage1SystemPrompt(request string) string {
 	return aiRenderStage1SystemPrompt(aiStage1SystemPromptData{
 		aiCharacterRequestParams: aiExtractCharacterRequestParams(request, d.aiDefaultCharacterRequestParams(request)),
 		Summary:                  d.currentCharacterSummary(),
 	})
+}
+
+func (d *aiChatDockable) aiBuildContinuationSystemPrompt(_ string, params aiCharacterRequestParams) string {
+	return strings.TrimSpace(fmt.Sprintf(`You are continuing an in-progress GURPS Fourth Edition character build for concept [%s].
+
+Target budget: exactly %d CP.
+Tech Level: TL %s.
+Disadvantage limit: up to %d points.
+
+Keep using the same budgeting guidance as the initial build:
+- Disadvantages and quirks: use up to %d points in disadvantages and maintain a full quirk set when building out the character.
+- Attributes: spend roughly 40-50%% of the total budget on core attributes and secondary characteristics.
+- Advantages: spend roughly 15-25%% of the total budget on concept-fitting advantages.
+- Skills: spend the remaining budget on a broad, realistic list of skills, not just a few headline combat skills.
+
+Treat the latest user instruction as an incremental request against the current character sheet.
+Return only the new or changed JSON needed for this turn.
+Do not repeat profile fields, attributes, skills, advantages, disadvantages, quirks, or equipment that are already on the sheet unless you are intentionally changing them.
+If the user asks for a category such as advantages, disadvantages, quirks, skills, attributes, or equipment, focus on that category first while keeping the overall build coherent.
+If the sheet still has large unspent CP or obvious gaps, continue filling the build instead of replaying the previous output.
+
+Current character sheet context:
+%s
+
+Execution Requirements:
+The application will resolve your suggested advantages, disadvantages, quirks, skills, traits, and equipment against the local GCS library after you respond.
+Do not invent database ids. Leave the "id" field empty unless you are certain.
+Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
+If a fixed specialization is part of the canonical library name, include it in "name". Example: "Driving (Automobile)".
+If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item. Example: "Area Knowledge" with notes "Mesa".
+Do not create custom equipment or custom abilities.
+For attributes, use only attribute ids that already exist on the current character sheet summary above when updating an existing sheet. Do not invent ids such as BX.
+If you include JSON, return exactly one top-level JSON object for the entire update.
+Do not split updates across multiple JSON objects.
+Do not include comments inside the JSON.
+Put that JSON object first in the response.
+When responding outside JSON, keep the answer concise, factual, and directly tied to GURPS 4e rules.`, params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, params.DisadvantageLimit, d.currentCharacterSummary()))
 }
 
 func (d *aiChatDockable) aiDefaultCharacterRequestParams(request string) aiCharacterRequestParams {
@@ -418,5 +513,17 @@ func aiBuildCharacterExpansionPrompt(originalRequest string, params aiCharacterR
 	builder.WriteString("- Set spend_all_cp to true once the build is substantially complete.\n")
 	builder.WriteString("- Make reasonable assumptions instead of waiting for another user message.\n")
 	builder.WriteString("Return ONLY the JSON object.\n")
+	return builder.String()
+}
+
+func aiBuildContinuationUserPrompt(request string, params aiCharacterRequestParams) string {
+	var builder strings.Builder
+	builder.WriteString("Continue the same GURPS 4e character build.\n")
+	builder.WriteString("Latest user instruction: ")
+	builder.WriteString(strconvQuote(request))
+	builder.WriteByte('\n')
+	builder.WriteString(fmt.Sprintf("Target budget remains %d CP at TL %s for concept %s.\n", params.TotalCP, params.TechLevel, params.Concept))
+	builder.WriteString("Return ONLY incremental JSON updates for this turn.\n")
+	builder.WriteString("Do not repeat items already on the character sheet unless you are changing them.\n")
 	return builder.String()
 }

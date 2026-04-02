@@ -91,6 +91,7 @@ type aiChatDockable struct {
 	submitButton     *unison.Button
 	chatHistory      []*genai.Content
 	chatMessages     []aiChatMessage
+	buildSession     *aiBuildSessionContext
 	isThinking       bool
 	thinkingMessage  *unison.Panel
 }
@@ -479,6 +480,7 @@ func (d *aiChatDockable) clearHistory() {
 	if unison.QuestionDialog(message, "") == unison.ModalResponseOK {
 		d.chatHistory = nil
 		d.chatMessages = nil
+		d.buildSession = nil
 		d.inputField.SetText("")
 		d.historyPanel.RemoveAllChildren()
 		d.historyPanel.MarkForLayoutAndRedraw()
@@ -882,6 +884,9 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 }
 
 func (d *aiChatDockable) activeOrOpenSheet() *Sheet {
+	defer func() {
+		_ = recover()
+	}()
 	if sheet := ActiveSheet(); sheet != nil {
 		return sheet
 	}
@@ -2894,6 +2899,7 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		d.addMessage("AI", i18n.Text("Gemini API Key is not set. Please configure it in the AI Settings."))
 		return
 	}
+	prepared := d.prepareAIRequest(prompt)
 	d.setThinking(true)
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
@@ -2906,10 +2912,10 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		defer client.Close()
 		model := client.GenerativeModel("gemini-pro")
 		chat := model.StartChat()
-		systemPrompt := d.aiSystemPromptForRequest(prompt)
+		systemPrompt := prepared.SystemPrompt
 		writeSystemPromptDebugFile(systemPrompt)
 		chat.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt)}}}, d.chatHistory...)
-		resp, err := chat.SendMessage(ctx, genai.Text(prompt))
+		resp, err := chat.SendMessage(ctx, genai.Text(prepared.UserPrompt))
 		if err != nil {
 			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error generating content: %v"), err)) })
 			return
@@ -2925,7 +2931,7 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 			}
 		}
 		responseStr := responseText.String()
-		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
+		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prepared.UserPrompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "model"})
 		retryCh := make(chan []aiRetryItem, 1)
 		unison.InvokeTask(func() { d.handleAIResponseWithCh(responseStr, retryCh) })
@@ -2974,25 +2980,23 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 	if model == "" {
 		model = "llama3"
 	}
-	isInitialBuildRequest := aiShouldUseDynamicStage1Prompt(prompt, len(d.chatHistory) != 0)
-	buildParams := aiCharacterRequestParams{}
-	if isInitialBuildRequest {
-		buildParams = aiExtractCharacterRequestParams(prompt, d.aiDefaultCharacterRequestParams(prompt))
-	}
+	prepared := d.prepareAIRequest(prompt)
+	isInitialBuildRequest := prepared.IsInitialBuild
+	buildParams := prepared.BuildParams
 
 	d.setThinking(true)
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
 
-		sysPrompt := d.aiSystemPromptForRequest(prompt)
+		sysPrompt := prepared.SystemPrompt
 		writeSystemPromptDebugFile(sysPrompt)
 		schema := aiActionPlanJSONSchema()
-		responseStr, err := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, prompt), schema)
+		responseStr, err := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, prepared.UserPrompt), schema)
 		if err != nil {
 			unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
 			return
 		}
-		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
+		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prepared.UserPrompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "assistant"})
 
 		resolution, err := d.resolveAIResponseText(responseStr)
@@ -3082,6 +3086,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				warnings = append(warnings, applyWarnings...)
 				retryItems = append(retryItems, applyRetryItems...)
 				applied = true
+				d.replaceLastAssistantHistoryWithAppliedSummary(resolution.ResolvedPlan)
 			}
 			for _, warning := range warnings {
 				d.addMessage("AI", warning)
@@ -3096,4 +3101,53 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 		})
 		<-doneCh
 	}()
+}
+
+func (d *aiChatDockable) replaceLastAssistantHistoryWithAppliedSummary(plan aiActionPlan) {
+	if len(d.chatHistory) == 0 {
+		return
+	}
+	last := d.chatHistory[len(d.chatHistory)-1]
+	if last == nil || aiNormalizeLocalRole(last.Role) != "assistant" {
+		return
+	}
+	last.Parts = []genai.Part{genai.Text(aiAppliedPlanHistorySummary(plan, d.currentCharacterSummary()))}
+}
+
+func aiAppliedPlanHistorySummary(plan aiActionPlan, currentSummary string) string {
+	updated := make([]string, 0, 6)
+	if plan.Profile != nil {
+		updated = append(updated, "profile")
+	}
+	if len(plan.Attributes) > 0 {
+		updated = append(updated, fmt.Sprintf("%d attribute changes", len(plan.Attributes)))
+	}
+	if len(plan.Advantages) > 0 {
+		updated = append(updated, fmt.Sprintf("%d advantages", len(plan.Advantages)))
+	}
+	if len(plan.Disadvantages) > 0 {
+		updated = append(updated, fmt.Sprintf("%d disadvantages", len(plan.Disadvantages)))
+	}
+	if len(plan.Quirks) > 0 {
+		updated = append(updated, fmt.Sprintf("%d quirks", len(plan.Quirks)))
+	}
+	if len(plan.Skills) > 0 {
+		updated = append(updated, fmt.Sprintf("%d skills", len(plan.Skills)))
+	}
+	if len(plan.Equipment) > 0 {
+		updated = append(updated, fmt.Sprintf("%d equipment items", len(plan.Equipment)))
+	}
+	var builder strings.Builder
+	builder.WriteString("Applied character-sheet update.")
+	if len(updated) > 0 {
+		builder.WriteString(" Updated: ")
+		builder.WriteString(strings.Join(updated, ", "))
+		builder.WriteString(".")
+	}
+	currentSummary = strings.TrimSpace(currentSummary)
+	if currentSummary != "" {
+		builder.WriteString("\n")
+		builder.WriteString(currentSummary)
+	}
+	return builder.String()
 }

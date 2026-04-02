@@ -92,6 +92,18 @@ func TestAIShouldUseDynamicStage1Prompt(t *testing.T) {
 	}
 }
 
+func TestAIShouldUseBuildContinuationPrompt(t *testing.T) {
+	if !aiShouldUseBuildContinuationPrompt("add advantages") {
+		t.Fatal("expected short follow-up category request to use build continuation prompt")
+	}
+	if !aiShouldUseBuildContinuationPrompt("spend the remaining points on skills and gear") {
+		t.Fatal("expected remaining-points request to use build continuation prompt")
+	}
+	if aiShouldUseBuildContinuationPrompt("How much does Combat Reflexes cost?") {
+		t.Fatal("expected general rules question to avoid build continuation prompt")
+	}
+}
+
 func TestAIActionPlanNeedsCharacterBuildCompletion(t *testing.T) {
 	if !aiActionPlanNeedsCharacterBuildCompletion(aiActionPlan{
 		Profile:    &aiProfileAction{Name: aiFlexibleString("Thomas Smith"), Title: aiFlexibleString("Mechanic")},
@@ -133,5 +145,39 @@ func TestAIBuildCharacterExpansionPrompt(t *testing.T) {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("expected prompt to contain %q, got %q", check, prompt)
 		}
+	}
+}
+
+func TestAIBuildContinuationUserPrompt(t *testing.T) {
+	prompt := aiBuildContinuationUserPrompt("add advantages", aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic"})
+	checks := []string{
+		"Continue the same GURPS 4e character build.",
+		"Latest user instruction: \"add advantages\"",
+		"Target budget remains 150 CP at TL 8 for concept mechanic.",
+		"Return ONLY incremental JSON updates for this turn.",
+		"Do not repeat items already on the character sheet unless you are changing them.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("expected prompt to contain %q, got %q", check, prompt)
+		}
+	}
+}
+
+func TestAIPrepareAIRequestUsesBuildContinuationSession(t *testing.T) {
+	var d aiChatDockable
+	d.buildSession = &aiBuildSessionContext{Params: aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50}}
+	prepared := d.prepareAIRequest("add advantages")
+	if !strings.Contains(prepared.SystemPrompt, "continuing an in-progress GURPS Fourth Edition character build") {
+		t.Fatalf("expected continuation system prompt, got %q", prepared.SystemPrompt)
+	}
+	if !strings.Contains(prepared.SystemPrompt, "40-50%") {
+		t.Fatalf("expected continuation prompt to preserve budget guidance, got %q", prepared.SystemPrompt)
+	}
+	if !strings.Contains(prepared.UserPrompt, "Return ONLY incremental JSON updates") {
+		t.Fatalf("expected rewritten continuation user prompt, got %q", prepared.UserPrompt)
+	}
+	if prepared.IsInitialBuild {
+		t.Fatal("expected continuation request to avoid initial build mode")
 	}
 }
