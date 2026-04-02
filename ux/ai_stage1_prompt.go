@@ -321,7 +321,7 @@ func aiExtractCharacterConcept(request string) string {
 }
 
 func (d *aiChatDockable) aiSystemPromptForRequest(request string) string {
-	if aiShouldUseDynamicStage1Prompt(request, len(d.chatHistory) != 0) {
+	if aiShouldUseDynamicStage1Prompt(request, d.buildSession != nil) {
 		return d.aiStage1SystemPrompt(request)
 	}
 	return d.aiAssistantSystemPrompt()
@@ -346,7 +346,7 @@ func aiShouldUseBuildContinuationPrompt(request string) bool {
 
 func (d *aiChatDockable) prepareAIRequest(request string) aiPreparedChatRequest {
 	request = strings.TrimSpace(request)
-	if aiShouldUseDynamicStage1Prompt(request, len(d.chatHistory) != 0) {
+	if aiShouldUseDynamicStage1Prompt(request, d.buildSession != nil) {
 		params := aiExtractCharacterRequestParams(request, d.aiDefaultCharacterRequestParams(request))
 		d.buildSession = &aiBuildSessionContext{OriginalRequest: request, Params: params}
 		return aiPreparedChatRequest{
@@ -526,4 +526,77 @@ func aiBuildContinuationUserPrompt(request string, params aiCharacterRequestPara
 	builder.WriteString("Return ONLY incremental JSON updates for this turn.\n")
 	builder.WriteString("Do not repeat items already on the character sheet unless you are changing them.\n")
 	return builder.String()
+}
+
+func aiBuildLocalPhase1Prompts(originalRequest string, params aiCharacterRequestParams, summary string) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e JSON generation function.
+Return exactly one top-level JSON object and nothing else.
+The Go application will resolve library entries, compute exact point totals, and perform final balancing after you respond.
+Use canonical GURPS Fourth Edition names. Leave the "id" field empty unless you are certain.
+If a fixed specialization is part of the canonical library name, include it in "name".
+If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
+Do not create custom equipment or custom abilities.
+
+Current character sheet context:
+%s`, summary))
+
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Phase 1: The Core Chassis.
+Original request: %s
+Concept: %s
+Target total budget: exactly %d CP.
+Tech Level: TL %s.
+Disadvantage limit: up to %d points.
+
+This phase may output ONLY these JSON fields:
+- attributes
+- advantages
+- disadvantages
+- quirks
+
+Do not include profile, skills, equipment, or spend_all_cp in this phase.
+
+Budget guidance for this chassis phase:
+- Spend roughly 40-50%% of the total budget on attributes and secondary characteristics.
+- Spend roughly 15-25%% of the total budget on advantages.
+- Use up to %d points in disadvantages that fit the concept.
+- Include exactly 5 quirks when the concept supports them.
+- Leave enough budget for a large Phase 2 skill package.
+
+Build a strong mechanical chassis for the concept and return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, params.DisadvantageLimit))
+	return systemPrompt, userPrompt
+}
+
+func aiBuildLocalPhase2Prompts(originalRequest string, params aiCharacterRequestParams, remainingCP int, summary string) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e JSON generation function.
+Return exactly one top-level JSON object and nothing else.
+The Go application will resolve library entries, snap skill points to valid GURPS 4e values, and perform final balancing after you respond.
+Use canonical GURPS Fourth Edition names. Leave the "id" field empty unless you are certain.
+If a fixed specialization is part of the canonical library name, include it in "name".
+If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
+Do not create custom equipment or custom abilities.
+
+Current character sheet context:
+%s`, summary))
+
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Phase 2: The Professional Package.
+Original request: %s
+Concept: %s
+Target total budget: exactly %d CP.
+Tech Level: TL %s.
+Exactly %d CP remain after Phase 1.
+
+This phase may output ONLY these JSON fields:
+- skills
+- equipment
+
+Do not include profile, attributes, advantages, disadvantages, quirks, or spend_all_cp in this phase.
+
+Instructions:
+- Spend all remaining character points on an expansive, concept-appropriate list of skills.
+- Equipment may be included when relevant, but the Go application handles CP math; focus your budgeting on skills.
+- Prefer a broad professional package with occupational, background, hobby, and practical skills, not just a few headline combat skills.
+- Use integer skill point requests that reflect intended emphasis. The Go application will snap them to valid GURPS 4e point costs.
+
+Return exactly one JSON object.`, strconvQuote(originalRequest), params.Concept, params.TotalCP, params.TechLevel, remainingCP))
+	return systemPrompt, userPrompt
 }

@@ -164,6 +164,58 @@ func TestAIBuildContinuationUserPrompt(t *testing.T) {
 	}
 }
 
+func TestAIBuildLocalPhase1Prompts(t *testing.T) {
+	systemPrompt, userPrompt := aiBuildLocalPhase1Prompts(
+		"Build a 200-point TL8 detective.",
+		aiCharacterRequestParams{TotalCP: 200, TechLevel: "8", Concept: "detective", DisadvantageLimit: 50},
+		"No active GURPS sheet is open.",
+	)
+	checks := []string{
+		"deterministic GURPS 4e JSON generation function",
+		"No active GURPS sheet is open.",
+		"Phase 1: The Core Chassis.",
+		"ONLY these JSON fields",
+		"attributes",
+		"advantages",
+		"disadvantages",
+		"quirks",
+		"40-50%",
+		"15-25%",
+		"up to 50 points in disadvantages",
+	}
+	combined := systemPrompt + "\n" + userPrompt
+	for _, check := range checks {
+		if !strings.Contains(combined, check) {
+			t.Fatalf("expected phase-1 prompts to contain %q, got %q", check, combined)
+		}
+	}
+}
+
+func TestAIBuildLocalPhase2Prompts(t *testing.T) {
+	systemPrompt, userPrompt := aiBuildLocalPhase2Prompts(
+		"Build a 200-point TL8 detective.",
+		aiCharacterRequestParams{TotalCP: 200, TechLevel: "8", Concept: "detective", DisadvantageLimit: 50},
+		73,
+		"Current character concept: detective",
+	)
+	checks := []string{
+		"deterministic GURPS 4e JSON generation function",
+		"Current character concept: detective",
+		"Phase 2: The Professional Package.",
+		"Exactly 73 CP remain after Phase 1.",
+		"ONLY these JSON fields",
+		"skills",
+		"equipment",
+		"snap them to valid GURPS 4e point costs",
+	}
+	combined := systemPrompt + "\n" + userPrompt
+	for _, check := range checks {
+		if !strings.Contains(combined, check) {
+			t.Fatalf("expected phase-2 prompts to contain %q, got %q", check, combined)
+		}
+	}
+}
+
 func TestAIPrepareAIRequestUsesBuildContinuationSession(t *testing.T) {
 	var d aiChatDockable
 	d.buildSession = &aiBuildSessionContext{Params: aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50}}

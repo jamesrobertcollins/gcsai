@@ -2981,23 +2981,24 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 		model = "llama3"
 	}
 	prepared := d.prepareAIRequest(prompt)
-	isInitialBuildRequest := prepared.IsInitialBuild
-	buildParams := prepared.BuildParams
 
 	d.setThinking(true)
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
 
+		if prepared.IsInitialBuild {
+			d.executeLocalThreePhaseGeneration(endpoint, model, prompt, prepared.BuildParams)
+			return
+		}
+
 		sysPrompt := prepared.SystemPrompt
 		writeSystemPromptDebugFile(sysPrompt)
 		schema := aiActionPlanJSONSchema()
-		responseStr, err := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, prepared.UserPrompt), schema)
+		responseStr, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(sysPrompt, prepared.UserPrompt), schema)
 		if err != nil {
 			unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
 			return
 		}
-		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prepared.UserPrompt)}, Role: "user"})
-		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "assistant"})
 
 		resolution, err := d.resolveAIResponseText(responseStr)
 		if err != nil {
@@ -3007,36 +3008,9 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 			})
 			return
 		}
-		if isInitialBuildRequest && resolution.Parsed && aiActionPlanNeedsCharacterBuildCompletion(resolution.Plan) {
-			completionPrompt := aiBuildCharacterExpansionPrompt(prompt, buildParams, resolution.Plan)
-			completionResponse, completionErr := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, completionPrompt), schema)
-			if completionErr != nil {
-				resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI initial character build was too sparse and the automatic completion pass failed."))
-			} else if strings.TrimSpace(completionResponse) != "" {
-				completionResolution, completionResolveErr := d.resolveAIResponseText(completionResponse)
-				switch {
-				case completionResolveErr != nil:
-					resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI automatic character-build completion could not be resolved: %v"), completionResolveErr))
-				case completionResolution.Parsed:
-					mergedPlan := resolution.Plan
-					mergeAIActionPlan(&mergedPlan, completionResolution.Plan)
-					mergedResolution, mergedErr := d.resolveAIActionPlanResult(mergedPlan)
-					if mergedErr != nil {
-						resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI automatic character-build completion could not be resolved: %v"), mergedErr))
-					} else {
-						resolution = mergedResolution
-						if aiActionPlanNeedsCharacterBuildCompletion(resolution.Plan) {
-							resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI returned a partial first-pass build; ask for more detail if you want further refinement."))
-						}
-					}
-				case strings.Contains(completionResponse, "{"):
-					resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI automatic character-build completion could not be parsed and was skipped."))
-				}
-			}
-		}
 		if resolution.Parsed && len(resolution.RetryItems) > 0 {
 			followUpPrompt := aiBuildLocalResolverAlternativePrompt(resolution.RetryItems)
-			followUpResponse, retryErr := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, followUpPrompt), schema)
+			followUpResponse, retryErr := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(sysPrompt, followUpPrompt), schema)
 			if retryErr != nil {
 				resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI follow-up alternatives could not be generated; unresolved items were skipped."))
 			} else if strings.TrimSpace(followUpResponse) != "" {
@@ -3086,7 +3060,6 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				warnings = append(warnings, applyWarnings...)
 				retryItems = append(retryItems, applyRetryItems...)
 				applied = true
-				d.replaceLastAssistantHistoryWithAppliedSummary(resolution.ResolvedPlan)
 			}
 			for _, warning := range warnings {
 				d.addMessage("AI", warning)

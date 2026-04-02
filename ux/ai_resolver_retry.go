@@ -60,6 +60,13 @@ func (d *aiChatDockable) buildLocalChatMessagesFromHistory(systemPrompt string, 
 	return append(messages, aiLocalChatMessage{Role: "user", Content: userPrompt})
 }
 
+func buildLocalStatelessMessages(systemPrompt, userPrompt string) []aiLocalChatMessage {
+	return []aiLocalChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+}
+
 func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
 	reqBody := struct {
 		Model    string               `json:"model"`
