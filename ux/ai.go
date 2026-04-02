@@ -16,15 +16,36 @@ import (
 
 var (
 	// AIChatActionID is the ID for the AI Chat action.
-	AIChatActionID = "ai.chat"
-	aiChatAction   *unison.Action
+	AIChatActionID                   = "ai.chat"
+	AIResolverDebugLogActionID       = "ai.resolver.debug_log"
+	AIResolverClearTelemetryActionID = "ai.resolver.clear_telemetry"
+	AIResolverAliasMappingsActionID  = "ai.resolver.alias_mappings"
+	aiChatAction                     *unison.Action
+	aiResolverDebugLogAction         *unison.Action
+	aiResolverClearTelemetryAction   *unison.Action
+	aiResolverAliasMappingsAction    *unison.Action
 )
 
 // registerAIAction creates and registers the AI-related actions.
 func registerAIAction() {
 	aiChatAction = registerKeyBindableAction(AIChatActionID, &unison.Action{
-		ID:              0,
+		ID:              AIChatItemID,
 		Title:           i18n.Text("AI Chat..."),
 		ExecuteCallback: func(_ *unison.Action, _ any) { ShowAIChat() },
+	})
+	aiResolverDebugLogAction = registerKeyBindableAction(AIResolverDebugLogActionID, &unison.Action{
+		ID:              AIResolverDebugLogItemID,
+		Title:           i18n.Text("AI Resolver Debug Log..."),
+		ExecuteCallback: func(_ *unison.Action, _ any) { ShowAIResolverDebugLog() },
+	})
+	aiResolverClearTelemetryAction = registerKeyBindableAction(AIResolverClearTelemetryActionID, &unison.Action{
+		ID:              AIResolverClearTelemetryItemID,
+		Title:           i18n.Text("Clear AI Resolver Telemetry"),
+		ExecuteCallback: func(_ *unison.Action, _ any) { ClearAIResolverDebugTelemetry() },
+	})
+	aiResolverAliasMappingsAction = registerKeyBindableAction(AIResolverAliasMappingsActionID, &unison.Action{
+		ID:              AIResolverAliasMappingsItemID,
+		Title:           i18n.Text("AI Resolver Alias Mappings..."),
+		ExecuteCallback: func(_ *unison.Action, _ any) { ShowAIResolverAliasMappings() },
 	})
 }

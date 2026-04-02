@@ -1,0 +1,137 @@
+package ux
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestAIExtractCharacterRequestParams(t *testing.T) {
+	defaults := aiCharacterRequestParams{
+		TotalCP:           150,
+		TechLevel:         "3",
+		Concept:           "Fallback Concept",
+		DisadvantageLimit: 50,
+	}
+	got := aiExtractCharacterRequestParams("Build a 250-point TL8 cyberpunk investigator with up to 40 points in disadvantages.", defaults)
+	if got.TotalCP != 250 {
+		t.Fatalf("expected TotalCP 250, got %d", got.TotalCP)
+	}
+	if got.TechLevel != "8" {
+		t.Fatalf("expected TechLevel 8, got %q", got.TechLevel)
+	}
+	if got.DisadvantageLimit != 40 {
+		t.Fatalf("expected DisadvantageLimit 40, got %d", got.DisadvantageLimit)
+	}
+	if got.Concept != "cyberpunk investigator" {
+		t.Fatalf("expected concept %q, got %q", "cyberpunk investigator", got.Concept)
+	}
+}
+
+func TestAIExtractCharacterRequestParamsKeepsDefaultsWhenMissing(t *testing.T) {
+	defaults := aiCharacterRequestParams{
+		TotalCP:           125,
+		TechLevel:         "4",
+		Concept:           "Fallback Concept",
+		DisadvantageLimit: 30,
+	}
+	got := aiExtractCharacterRequestParams("Create a wandering knight for GURPS", defaults)
+	if got.TotalCP != 125 {
+		t.Fatalf("expected TotalCP 125, got %d", got.TotalCP)
+	}
+	if got.TechLevel != "4" {
+		t.Fatalf("expected TechLevel 4, got %q", got.TechLevel)
+	}
+	if got.DisadvantageLimit != 30 {
+		t.Fatalf("expected DisadvantageLimit 30, got %d", got.DisadvantageLimit)
+	}
+	if got.Concept != "wandering knight" {
+		t.Fatalf("expected concept %q, got %q", "wandering knight", got.Concept)
+	}
+}
+
+func TestAIExtractTotalCPIgnoresDisadvantagePoints(t *testing.T) {
+	got := aiExtractTotalCP("Use up to 40 points in disadvantages on a 25-point child prodigy.")
+	if got != 25 {
+		t.Fatalf("expected TotalCP 25, got %d", got)
+	}
+}
+
+func TestAIRenderStage1SystemPrompt(t *testing.T) {
+	prompt := aiRenderStage1SystemPrompt(aiStage1SystemPromptData{
+		aiCharacterRequestParams: aiCharacterRequestParams{
+			TotalCP:           250,
+			TechLevel:         "8",
+			Concept:           "cyberpunk investigator",
+			DisadvantageLimit: 40,
+		},
+		Summary: "No active GURPS sheet is open.",
+	})
+	checks := []string{
+		"[cyberpunk investigator]",
+		"exactly 250 Character Points (CP)",
+		"TL 8",
+		"up to 40 points in disadvantages",
+		"No active GURPS sheet is open.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("expected prompt to contain %q", check)
+		}
+	}
+}
+
+func TestAIShouldUseDynamicStage1Prompt(t *testing.T) {
+	if !aiShouldUseDynamicStage1Prompt("Build a 150-point swashbuckler.", false) {
+		t.Fatal("expected first build request to use dynamic stage-1 prompt")
+	}
+	if aiShouldUseDynamicStage1Prompt("Build a 150-point swashbuckler.", true) {
+		t.Fatal("expected follow-up requests to stay on the generic prompt")
+	}
+	if aiShouldUseDynamicStage1Prompt("How does TL8 equipment legality work?", false) {
+		t.Fatal("expected general rules questions to stay on the generic prompt")
+	}
+}
+
+func TestAIActionPlanNeedsCharacterBuildCompletion(t *testing.T) {
+	if !aiActionPlanNeedsCharacterBuildCompletion(aiActionPlan{
+		Profile:    &aiProfileAction{Name: aiFlexibleString("Thomas Smith"), Title: aiFlexibleString("Mechanic")},
+		SpendAllCP: true,
+	}) {
+		t.Fatal("expected profile-only build plan to require completion")
+	}
+
+	if aiActionPlanNeedsCharacterBuildCompletion(aiActionPlan{
+		Profile:       &aiProfileAction{Name: aiFlexibleString("Thomas Smith"), Title: aiFlexibleString("Mechanic")},
+		Attributes:    []aiAttributeAction{{ID: aiFlexibleString("DX"), Value: aiFlexibleString("12")}, {ID: aiFlexibleString("IQ"), Value: aiFlexibleString("11")}},
+		Advantages:    []aiNamedAction{{Name: aiFlexibleString("Combat Reflexes"), Points: aiFlexibleString("15")}},
+		Disadvantages: []aiNamedAction{{Name: aiFlexibleString("Overconfidence"), Points: aiFlexibleString("-5")}},
+		Quirks:        []aiNamedAction{{Name: aiFlexibleString("Keeps tools immaculate"), Points: aiFlexibleString("-1")}},
+		Skills:        []aiSkillAction{{Name: aiFlexibleString("Mechanic (Vehicles)"), Points: aiFlexibleString("12")}, {Name: aiFlexibleString("Brawling"), Points: aiFlexibleString("4")}},
+		Equipment:     []aiNamedAction{{Name: aiFlexibleString("Tool Kit"), Quantity: aiFlexibleInt(1)}},
+		SpendAllCP:    true,
+	}) {
+		t.Fatal("expected substantial build plan to be treated as complete enough")
+	}
+}
+
+func TestAIBuildCharacterExpansionPrompt(t *testing.T) {
+	prompt := aiBuildCharacterExpansionPrompt(
+		"Build a 150-point TL8 mechanic.",
+		aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50},
+		aiActionPlan{Profile: &aiProfileAction{Title: aiFlexibleString("Mechanic")}, SpendAllCP: true},
+	)
+	checks := []string{
+		"too incomplete for an initial GURPS 4e character build",
+		"Do not wait for the user to ask for more details",
+		"Budget: 150 CP | TL 8 | Concept: mechanic | Disadvantage limit: 50",
+		"attributes",
+		"advantages/disadvantages/quirks",
+		"skills",
+		"Return ONLY the JSON object.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("expected prompt to contain %q, got %q", check, prompt)
+		}
+	}
+}

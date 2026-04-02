@@ -94,7 +94,7 @@ type Settings struct {
 	PDFs               map[string]*PDFInfo        `json:"pdfs,omitzero"`
 	LootGenMinValue    fxp.Int                    `json:"loot_gen_min_value"`
 	LootGenMaxValue    fxp.Int                    `json:"loot_gen_max_value"`
-	AI                 AISettings 				  `json:"ai,omitempty"`
+	AI                 AISettings                 `json:"ai,omitempty"`
 }
 
 // IDer defines the methods required of objects that have an ID.
@@ -210,6 +210,7 @@ func (s *Settings) EnsureValidity() {
 	} else {
 		s.Sheet.EnsureValidity()
 	}
+	s.AI.EnsureValidity()
 	s.OpenInWindow = SanitizeDockableGroups(s.OpenInWindow)
 }
 

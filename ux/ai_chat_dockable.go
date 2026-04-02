@@ -10,14 +10,11 @@
 package ux
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -87,14 +84,15 @@ type aiChatPDFExporter struct {
 
 type aiChatDockable struct {
 	unison.Panel
-	historyPanel    *unison.Panel
-	scroll          *unison.ScrollPanel
-	inputField      *unison.Field
-	submitButton    *unison.Button
-	chatHistory     []*genai.Content
-	chatMessages    []aiChatMessage
-	isThinking      bool
-	thinkingMessage *unison.Panel
+	historyPanel     *unison.Panel
+	scroll           *unison.ScrollPanel
+	inputField       *unison.Field
+	newSessionButton *unison.Button
+	submitButton     *unison.Button
+	chatHistory      []*genai.Content
+	chatMessages     []aiChatMessage
+	isThinking       bool
+	thinkingMessage  *unison.Panel
 }
 
 var (
@@ -403,10 +401,11 @@ func (d *aiChatDockable) initContent() {
 	// Toolbar
 	toolbar := unison.NewPanel()
 	toolbar.SetLayout(&unison.FlowLayout{HSpacing: unison.StdHSpacing})
-	clearButton := unison.NewSVGButton(svg.Trash)
-	clearButton.Tooltip = newWrappedTooltip(i18n.Text("Clear Chat History"))
-	clearButton.ClickCallback = d.clearHistory
-	toolbar.AddChild(clearButton)
+	d.newSessionButton = unison.NewButton()
+	d.newSessionButton.SetTitle(i18n.Text("New Session"))
+	d.newSessionButton.Tooltip = newWrappedTooltip(i18n.Text("Start a fresh AI session and clear the current conversation memory"))
+	d.newSessionButton.ClickCallback = d.clearHistory
+	toolbar.AddChild(d.newSessionButton)
 	exportPDFButton := unison.NewSVGButton(svg.PDFFile)
 	exportPDFButton.Tooltip = newWrappedTooltip(i18n.Text("Export Chat History as PDF"))
 	exportPDFButton.ClickCallback = d.exportChatHistoryAsPDF
@@ -473,9 +472,14 @@ func (d *aiChatDockable) initContent() {
 }
 
 func (d *aiChatDockable) clearHistory() {
-	if unison.QuestionDialog(i18n.Text("Are you sure you want to clear the chat history?"), "") == unison.ModalResponseOK {
+	if d.isThinking {
+		return
+	}
+	message := i18n.Text("Start a new AI session? This clears the current chat history and conversation memory so the next request starts fresh.")
+	if unison.QuestionDialog(message, "") == unison.ModalResponseOK {
 		d.chatHistory = nil
 		d.chatMessages = nil
+		d.inputField.SetText("")
 		d.historyPanel.RemoveAllChildren()
 		d.historyPanel.MarkForLayoutAndRedraw()
 	}
@@ -757,45 +761,33 @@ func (d *aiChatDockable) addMessage(author, message string) *unison.Panel {
 
 func (d *aiChatDockable) aiAssistantSystemPrompt() string {
 	summary := d.currentCharacterSummary()
-	availableItems := d.getCompleteAvailableLibraryItems()
-	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS Fourth Edition character builder assistant.
-Use the current character sheet state and the player's concept to make recommendations.
+	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS Fourth Edition character builder assistant. You help design and optimize characters based on user input and GURPS 4e rules.
+	You can suggest specific character-sheet updates, including advantages, disadvantages, quirks, skills, traits, equipment, and attribute changes.
+Use the current character sheet state and the player's concept to propose character-sheet updates.
 Always validate choices, compute point costs, and keep Tech Level constraints in mind.
-Evaluate available library options against the character concept, game-world setting, and Tech Level.
-CRITICAL SYSTEM NOTES: You MUST choose advantages, disadvantages, quirks, traits, and skills ONLY from the complete lists provided below.
-Do NOT suggest any advantages, disadvantages, quirks, traits, and skills that are not in these lists. Do NOT invent custom ability names.
-For attributes, use only attribute ids that already exist on the current character sheet summary below. Do NOT invent attribute ids such as BX.
-When returning actions for advantages, disadvantages, quirks, skills, traits, and equipment: ALWAYS include the exact id from the list entry.
-Use only the id value shown after "id=" in the list. Never use a library/source label (for example, never use "GURPS" as an id).
-For advantages, disadvantages, quirks, skills, traits and equipment, copy the exact listed name verbatim into the JSON "name" field.
-If the list shows a specialization in parentheses, copy it exactly. For example, use "Driving (Automobile)", not "Driving (Car)" and not "Driving (Car) - Chevrolet Impala".
-Do not append explanations, descriptions, or item context to JSON names.
-For quirks, put roleplay flavor in "notes" and keep "name" equal to the exact listed quirk name only. Example: "name":"Must make an entrance", "notes":"with Groucho".
-If an item is not in the provided lists, do not include it in JSON updates.
-Do not use placeholder ids like "<skill-id>" or "<equipment-id>".
-Equipment must come from the provided equipment list; do not create custom equipment entries.
+The application will resolve your suggested advantages, disadvantages, quirks, skills, traits, and equipment against the local GCS library after you respond.
+Do not invent database ids. Leave the "id" field empty unless you are certain.
+Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
+If a fixed specialization is part of the canonical library name, include it in "name". Example: "Driving (Automobile)".
+If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item. Example: "Area Knowledge" with notes "Mesa".
+Do not create custom equipment or custom abilities.
+For attributes, use only attribute ids that already exist on the current character sheet summary below. Do not invent ids such as BX.
 If the user asks for changes, propose specific character-sheet updates and a clear CP breakdown.
-If no sheet is active, ask the user to open or create a character sheet before proceeding.
-Some traits and skills require a subject or specialization to be filled in. These are shown in the library list with a "requires:" tag listing placeholder names (e.g. "requires: subject"). When adding such a trait or skill, you MUST supply a "notes" field containing the appropriate value. 
-If a list entry does NOT show a "requires:" tag, do NOT invent a new parenthetical variant for it. Use the exact listed name or exact id only.
-If multiple concrete variants are listed, pick the exact matching variant from the list instead of synthesizing a new one.
+If no sheet is active, say so plainly; the application can create one when applying changes.
 
-%s
-
-AVAILABLE LIBRARY ITEMS - Choose ONLY from THIS list:
 %s
 
 ADDITIONAL GUIDANCE:
-When asked to apply changes, include a top-level JSON object showing character updates using items from the lists ABOVE. 
-Below is an EXAMPLE do not use this example data in your response, it is for formatting reference only:
+When asked to apply changes, include a single top-level JSON object describing the character-sheet updates.
+Below is an EXAMPLE. Do not reuse the example content; it is only a formatting reference:
 Keys:
 - profile: {"name":"John Smith","gender":"M","age":"25","height":"5'10\"","weight":"180 lbs","hair":"brown","eyes":"blue","skin":"fair","handedness":"Right","title":"Adventurer","organization":"","religion":"","tech_level":"3"}
 - attributes: [{"id":"ST","value":"12"}]
-- advantages: [{"id":"<adv-id>","name":"Combat Reflexes","points":"15"}]
-- disadvantages: [{"id":"<disadv-id>","name":"Code of Honor","notes":"Honor among thieves","points":"-10"}]
-- quirks: [{"id":"<quirk-id>","name":"Must make an entrance","points":"-1"}]
-- skills: [{"id":"<skill-id>","name":"Brawling","points":"4"}]
-- equipment: [{"id":"<equipment-id>","name":"Leather Armor","quantity":1}]
+- advantages: [{"name":"Combat Reflexes","points":"15"}]
+- disadvantages: [{"name":"Code of Honor","notes":"Honor among thieves","points":"-10"}]
+- quirks: [{"name":"Must make an entrance","notes":"with Groucho","points":"-1"}]
+- skills: [{"name":"Brawling","points":"4"}]
+- equipment: [{"name":"Leather Armor","quantity":1}]
 - spend_all_cp: true
 
 Only include profile fields if you have determined suitable values for them based on the character concept. For height and weight, use common formats like "5'10\"" or "175 lbs". Include only the profile fields that should be updated; omit others.
@@ -803,7 +795,7 @@ If you include JSON, return exactly one top-level JSON object for the entire upd
 Do not split updates across multiple JSON objects.
 Do not include comments inside the JSON.
 Put that JSON object first in the response.
-When responding, keep answers concise, factual, and directly tied to GURPS 4e rules.`, summary, availableItems))
+When responding outside JSON, keep the answer concise, factual, and directly tied to GURPS 4e rules.`, summary))
 }
 
 func (d *aiChatDockable) currentCharacterSummary() string {
@@ -929,7 +921,11 @@ func (d *aiChatDockable) getCompleteAvailableLibraryItems() string {
 	if len(skills) > 0 {
 		builder.WriteString("SKILLS:\n")
 		for _, skill := range skills {
-			builder.WriteString(fmt.Sprintf("  - id=%s | name=%s | %s\n", skill.ID, skillDisplayName(skill.Name, skill.Specialization), skill.SourcePath))
+			line := fmt.Sprintf("  - id=%s | name=%s | %s", skill.ID, firstNonEmptyString(skill.DisplayName, skillDisplayName(skill.Name, skill.Specialization)), skill.SourcePath)
+			if len(skill.Nameables) > 0 {
+				line += fmt.Sprintf(" | requires: %s", strings.Join(skill.Nameables, ", "))
+			}
+			builder.WriteString(line + "\n")
 		}
 		builder.WriteString("\n")
 	}
@@ -1127,7 +1123,9 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 	}, func(item any, sourcePath string) {
 		skill := item.(*gurps.Skill)
 		if skill.Name != "" && !skill.Container() {
-			skillsMap[string(skill.TID)] = aiLibraryItemRef{ID: string(skill.TID), Name: skill.Name, Specialization: skill.Specialization, SourcePath: sourcePath}
+			nameableKeys := make(map[string]string)
+			skill.FillWithNameableKeys(nameableKeys, nil)
+			skillsMap[string(skill.TID)] = aiLibraryItemRef{ID: string(skill.TID), Name: skill.Name, DisplayName: aiCatalogEntryDisplayName(skill.Name, skill.Specialization), Specialization: skill.Specialization, SourcePath: sourcePath, Nameables: aiSortedNameableKeys(nameableKeys)}
 		}
 	})
 
@@ -1220,6 +1218,9 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 func (d *aiChatDockable) setThinking(thinking bool) {
 	d.isThinking = thinking
 	d.submitButton.SetEnabled(!thinking)
+	if d.newSessionButton != nil {
+		d.newSessionButton.SetEnabled(!thinking)
+	}
 	if thinking {
 		d.thinkingMessage = d.addMessage("AI", i18n.Text("Thinking..."))
 	} else if d.thinkingMessage != nil {
@@ -1239,11 +1240,22 @@ func (d *aiChatDockable) handleAIResponseWithCh(responseStr string, retryCh chan
 		retryCh <- nil
 		return
 	}
-	warnings, retryItems, err := d.applyAIActionPlan(plan)
+	catalog, err := d.aiLibraryCatalog()
 	if err != nil {
-		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI plan could not be applied: %v"), err))
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI library catalog could not be prepared: %v"), err))
 		retryCh <- nil
 		return
+	}
+	resolvedPlan, retryItems, warnings := catalog.resolveAIActionPlan(plan)
+	if hasAIActionPlanContent(resolvedPlan) {
+		applyWarnings, applyRetryItems, applyErr := d.applyAIActionPlan(resolvedPlan)
+		if applyErr != nil {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI plan could not be applied: %v"), applyErr))
+			retryCh <- nil
+			return
+		}
+		warnings = append(warnings, applyWarnings...)
+		retryItems = append(retryItems, applyRetryItems...)
 	}
 	for _, warning := range warnings {
 		d.addMessage("AI", warning)
@@ -1261,12 +1273,24 @@ func (d *aiChatDockable) applyCorrectionResponse(responseStr string) {
 		d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
 		return
 	}
-	warnings, _, err := d.applyAIActionPlan(plan)
+	catalog, err := d.aiLibraryCatalog()
 	if err != nil {
-		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI correction could not be applied: %v"), err))
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI library catalog could not be prepared for corrections: %v"), err))
+		return
+	}
+	resolvedPlan, retryItems, warnings := catalog.resolveAIActionPlan(plan)
+	if hasAIActionPlanContent(resolvedPlan) {
+		applyWarnings, _, applyErr := d.applyAIActionPlan(resolvedPlan)
+		warnings = append(warnings, applyWarnings...)
+		if applyErr != nil {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI correction could not be applied: %v"), applyErr))
+		}
 	}
 	for _, warning := range warnings {
 		d.addMessage("AI", warning)
+	}
+	if len(retryItems) != 0 {
+		d.addMessage("AI", i18n.Text("Some corrected items still need exact library selection and were skipped."))
 	}
 	d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
 }
@@ -1315,6 +1339,7 @@ func (s aiFlexibleString) String() string {
 type aiLibraryItemRef struct {
 	ID             string
 	Name           string
+	DisplayName    string
 	Specialization string
 	SourcePath     string
 	Nameables      []string // @key@ placeholders the AI must fill via "notes"
@@ -1392,12 +1417,6 @@ type aiSkillAction struct {
 	Points aiFlexibleString `json:"points,omitempty"`
 	Value  aiFlexibleString `json:"value,omitempty"`
 	Level  aiFlexibleString `json:"level,omitempty"`
-}
-
-type aiRetryItem struct {
-	Category string
-	Name     string
-	Similar  []string
 }
 
 func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
@@ -2088,7 +2107,24 @@ func normalizeAISkillName(raw string) string {
 	if idx := strings.Index(value, " - "); idx > 0 {
 		value = strings.TrimSpace(value[:idx])
 	}
+	base, specialization := splitSkillNameAndSpecialization(value)
+	if canonicalBase := canonicalizeAISkillBaseName(base); canonicalBase != "" && !strings.EqualFold(canonicalBase, base) {
+		if strings.TrimSpace(specialization) != "" {
+			return skillDisplayName(canonicalBase, specialization)
+		}
+		return canonicalBase
+	}
 	return value
+}
+
+func canonicalizeAISkillBaseName(base string) string {
+	trimmed := strings.TrimSpace(base)
+	switch normalizeLookupText(trimmed) {
+	case "mechanics":
+		return "Mechanic"
+	default:
+		return trimmed
+	}
 }
 
 func normalizeAINamedItemName(raw string) string {
@@ -2427,8 +2463,8 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 	if name == "" && !useTIDLookup {
 		return traits, "", fmt.Errorf("trait action is missing a name or valid id")
 	}
-	if useTIDLookup {
-		if existing := d.findExistingTraitByID(entity, idStr); existing != nil {
+	if name != "" {
+		if existing := d.findExistingTrait(entity, name); existing != nil {
 			if pointsText := strings.TrimSpace(action.Points.String()); pointsText != "" {
 				if points, err := fxp.FromString(pointsText); err == nil {
 					existing.BasePoints = points
@@ -2437,8 +2473,8 @@ func (d *aiChatDockable) addOrUpdateTrait(entity *gurps.Entity, traits []*gurps.
 			return traits, "", nil
 		}
 	}
-	if name != "" {
-		if existing := d.findExistingTrait(entity, name); existing != nil {
+	if useTIDLookup {
+		if existing := d.findExistingTraitByID(entity, idStr, name); existing != nil {
 			if pointsText := strings.TrimSpace(action.Points.String()); pointsText != "" {
 				if points, err := fxp.FromString(pointsText); err == nil {
 					existing.BasePoints = points
@@ -2525,8 +2561,8 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	if idStr != "" && !useTIDLookup {
 		warningPrefix = fmt.Sprintf("Warning: skill %q provided invalid id %q; falling back to name lookup. ", name, idStr)
 	}
-	if useTIDLookup {
-		if existing := d.findExistingSkillByID(entity, idStr); existing != nil {
+	if name != "" {
+		if existing := findExistingSkillInList(skills, name); existing != nil {
 			if pointsText != "" {
 				if points, err := fxp.FromString(pointsText); err == nil {
 					existing.Points = points
@@ -2540,8 +2576,8 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 			return skills, "", nil, nil
 		}
 	}
-	if name != "" {
-		if existing := d.findExistingSkill(entity, name); existing != nil {
+	if useTIDLookup {
+		if existing := findExistingSkillByIDInList(skills, idStr, name); existing != nil {
 			if pointsText != "" {
 				if points, err := fxp.FromString(pointsText); err == nil {
 					existing.Points = points
@@ -2616,16 +2652,16 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 	if name == "" && !useTIDLookup {
 		return equipment, "", fmt.Errorf("equipment action is missing a name or valid id")
 	}
-	if useTIDLookup {
-		if existing := d.findExistingEquipmentByID(entity, idStr); existing != nil {
+	if name != "" {
+		if existing := d.findExistingEquipment(entity, name); existing != nil {
 			if action.Quantity.Int() != 0 {
 				existing.Quantity = fxp.FromInteger(action.Quantity.Int())
 			}
 			return equipment, "", nil
 		}
 	}
-	if name != "" {
-		if existing := d.findExistingEquipment(entity, name); existing != nil {
+	if useTIDLookup {
+		if existing := d.findExistingEquipmentByID(entity, idStr, name); existing != nil {
 			if action.Quantity.Int() != 0 {
 				existing.Quantity = fxp.FromInteger(action.Quantity.Int())
 			}
@@ -2668,19 +2704,25 @@ func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []
 
 func (d *aiChatDockable) findExistingTrait(entity *gurps.Entity, name string) *gurps.Trait {
 	name = strings.TrimSpace(name)
+	requestedNorm := normalizeLookupText(name)
 	for _, trait := range entity.Traits {
 		if trait.Container() {
 			continue
 		}
-		if strings.EqualFold(trait.Name, name) {
+		resolvedName := aiResolvedTraitName(trait)
+		if strings.EqualFold(trait.Name, name) || strings.EqualFold(resolvedName, name) {
+			return trait
+		}
+		if requestedNorm != "" && normalizeLookupText(resolvedName) == requestedNorm {
 			return trait
 		}
 	}
 	return nil
 }
 
-func (d *aiChatDockable) findExistingTraitByID(entity *gurps.Entity, idStr string) *gurps.Trait {
+func (d *aiChatDockable) findExistingTraitByID(entity *gurps.Entity, idStr, name string) *gurps.Trait {
 	idStr = normalizeAISelectionID(idStr)
+	requestedNorm := normalizeLookupText(name)
 	if idStr == "" {
 		return nil
 	}
@@ -2688,22 +2730,35 @@ func (d *aiChatDockable) findExistingTraitByID(entity *gurps.Entity, idStr strin
 		if trait.Container() {
 			continue
 		}
-		if string(trait.TID) == idStr {
-			return trait
+		sourceID := normalizeAISelectionID(string(trait.Source.TID))
+		localID := normalizeAISelectionID(string(trait.TID))
+		if sourceID != idStr && localID != idStr {
+			continue
 		}
+		if requestedNorm != "" && normalizeLookupText(aiResolvedTraitName(trait)) != requestedNorm {
+			continue
+		}
+		return trait
 	}
 	return nil
 }
 
 func (d *aiChatDockable) findExistingSkill(entity *gurps.Entity, name string) *gurps.Skill {
+	if entity == nil {
+		return nil
+	}
+	return findExistingSkillInList(entity.Skills, name)
+}
+
+func findExistingSkillInList(skills []*gurps.Skill, name string) *gurps.Skill {
 	name = strings.TrimSpace(name)
 	requestedNorm := normalizeLookupText(name)
-	for _, skill := range entity.Skills {
+	for _, skill := range skills {
 		if skill.Container() {
 			continue
 		}
-		displayName := skillDisplayName(skill.Name, skill.Specialization)
-		if strings.EqualFold(skill.Name, name) || strings.EqualFold(displayName, name) {
+		displayName := aiResolvedSkillDisplayName(skill)
+		if strings.EqualFold(skill.Name, name) || strings.EqualFold(displayName, name) || strings.EqualFold(aiResolvedSkillName(skill), name) {
 			return skill
 		}
 		if requestedNorm != "" && normalizeLookupText(displayName) == requestedNorm {
@@ -2713,37 +2768,57 @@ func (d *aiChatDockable) findExistingSkill(entity *gurps.Entity, name string) *g
 	return nil
 }
 
-func (d *aiChatDockable) findExistingSkillByID(entity *gurps.Entity, idStr string) *gurps.Skill {
+func (d *aiChatDockable) findExistingSkillByID(entity *gurps.Entity, idStr, name string) *gurps.Skill {
+	if entity == nil {
+		return nil
+	}
+	return findExistingSkillByIDInList(entity.Skills, idStr, name)
+}
+
+func findExistingSkillByIDInList(skills []*gurps.Skill, idStr, name string) *gurps.Skill {
 	idStr = normalizeAISelectionID(idStr)
+	requestedNorm := normalizeLookupText(name)
 	if idStr == "" {
 		return nil
 	}
-	for _, skill := range entity.Skills {
+	for _, skill := range skills {
 		if skill.Container() {
 			continue
 		}
-		if string(skill.TID) == idStr {
-			return skill
+		sourceID := normalizeAISelectionID(string(skill.Source.TID))
+		localID := normalizeAISelectionID(string(skill.TID))
+		if sourceID != idStr && localID != idStr {
+			continue
 		}
+		if requestedNorm != "" && normalizeLookupText(aiResolvedSkillDisplayName(skill)) != requestedNorm {
+			continue
+		}
+		return skill
 	}
 	return nil
 }
 
 func (d *aiChatDockable) findExistingEquipment(entity *gurps.Entity, name string) *gurps.Equipment {
 	name = strings.TrimSpace(name)
-	for _, eqp := range entity.CarriedEquipment {
+	requestedNorm := normalizeLookupText(name)
+	for _, eqp := range append(append([]*gurps.Equipment(nil), entity.CarriedEquipment...), entity.OtherEquipment...) {
 		if eqp.Container() {
 			continue
 		}
-		if strings.EqualFold(eqp.Name, name) {
+		resolvedName := aiResolvedEquipmentName(eqp)
+		if strings.EqualFold(eqp.Name, name) || strings.EqualFold(resolvedName, name) {
+			return eqp
+		}
+		if requestedNorm != "" && normalizeLookupText(resolvedName) == requestedNorm {
 			return eqp
 		}
 	}
 	return nil
 }
 
-func (d *aiChatDockable) findExistingEquipmentByID(entity *gurps.Entity, idStr string) *gurps.Equipment {
+func (d *aiChatDockable) findExistingEquipmentByID(entity *gurps.Entity, idStr, name string) *gurps.Equipment {
 	idStr = normalizeAISelectionID(idStr)
+	requestedNorm := normalizeLookupText(name)
 	if idStr == "" {
 		return nil
 	}
@@ -2751,36 +2826,65 @@ func (d *aiChatDockable) findExistingEquipmentByID(entity *gurps.Entity, idStr s
 		if eqp.Container() {
 			continue
 		}
-		if string(eqp.TID) == idStr {
-			return eqp
+		sourceID := normalizeAISelectionID(string(eqp.Source.TID))
+		localID := normalizeAISelectionID(string(eqp.TID))
+		if sourceID != idStr && localID != idStr {
+			continue
 		}
+		if requestedNorm != "" && normalizeLookupText(aiResolvedEquipmentName(eqp)) != requestedNorm {
+			continue
+		}
+		return eqp
 	}
 	for _, eqp := range entity.OtherEquipment {
 		if eqp.Container() {
 			continue
 		}
-		if string(eqp.TID) == idStr {
-			return eqp
+		sourceID := normalizeAISelectionID(string(eqp.Source.TID))
+		localID := normalizeAISelectionID(string(eqp.TID))
+		if sourceID != idStr && localID != idStr {
+			continue
 		}
+		if requestedNorm != "" && normalizeLookupText(aiResolvedEquipmentName(eqp)) != requestedNorm {
+			continue
+		}
+		return eqp
 	}
 	return nil
 }
 
 func buildAIRetryPrompt(items []aiRetryItem) string {
 	var b strings.Builder
-	b.WriteString("Some items were not found in the library and were skipped.\n")
-	b.WriteString("Return a JSON object with ONLY corrected entries for these items.\n")
-	b.WriteString("You MUST choose replacement names exclusively from the alternatives listed below.\n\n")
+	b.WriteString("Some items could not be resolved to exact library entries.\n")
+	b.WriteString("Return a JSON object with ONLY corrected entries for these unresolved items.\n")
+	b.WriteString("Use only the candidate ids and candidate names shown below. Preserve the original points, quantity, and notes unless the selected candidate requires a different nameable value.\n\n")
 	for _, item := range items {
-		b.WriteString(fmt.Sprintf("- %s %q was not found.", item.Category, item.Name))
-		if len(item.Similar) > 0 {
-			b.WriteString(fmt.Sprintf(" Available alternatives: %s.", strings.Join(item.Similar, ", ")))
-		} else {
-			b.WriteString(" No close alternatives found; omit this item.")
+		b.WriteString(fmt.Sprintf("- category=%s | requested=%q", aiCategoryJSONField(item.Category), item.Name))
+		if strings.TrimSpace(item.Notes) != "" {
+			b.WriteString(fmt.Sprintf(" | notes=%q", item.Notes))
+		}
+		if strings.TrimSpace(item.Points) != "" {
+			b.WriteString(fmt.Sprintf(" | points=%q", item.Points))
+		}
+		if item.Quantity != 0 {
+			b.WriteString(fmt.Sprintf(" | quantity=%d", item.Quantity))
 		}
 		b.WriteString("\n")
+		if len(item.Candidates) > 0 {
+			for _, candidate := range item.Candidates {
+				b.WriteString(fmt.Sprintf("  - id=%s | name=%s", candidate.ID, candidate.Name))
+				if len(candidate.Requires) > 0 {
+					b.WriteString(fmt.Sprintf(" | requires: %s", strings.Join(candidate.Requires, ", ")))
+				}
+				b.WriteString("\n")
+			}
+		} else if len(item.Similar) > 0 {
+			b.WriteString(fmt.Sprintf("  - alternatives: %s\n", strings.Join(item.Similar, ", ")))
+		} else {
+			b.WriteString("  - no close alternatives found; omit this item\n")
+		}
 	}
-	b.WriteString("\nReturn ONLY the corrected JSON for these items, using the exact alternative names shown.")
+	b.WriteString("\nReturn ONLY the corrected JSON for these items, using the exact candidate ids and candidate names shown.")
 	return b.String()
 }
 
@@ -2802,7 +2906,7 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		defer client.Close()
 		model := client.GenerativeModel("gemini-pro")
 		chat := model.StartChat()
-		systemPrompt := d.aiAssistantSystemPrompt()
+		systemPrompt := d.aiSystemPromptForRequest(prompt)
 		writeSystemPromptDebugFile(systemPrompt)
 		chat.History = append([]*genai.Content{{Role: "system", Parts: []genai.Part{genai.Text(systemPrompt)}}}, d.chatHistory...)
 		resp, err := chat.SendMessage(ctx, genai.Text(prompt))
@@ -2870,202 +2974,126 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 	if model == "" {
 		model = "llama3"
 	}
+	isInitialBuildRequest := aiShouldUseDynamicStage1Prompt(prompt, len(d.chatHistory) != 0)
+	buildParams := aiCharacterRequestParams{}
+	if isInitialBuildRequest {
+		buildParams = aiExtractCharacterRequestParams(prompt, d.aiDefaultCharacterRequestParams(prompt))
+	}
 
 	d.setThinking(true)
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
 
-		type message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-
-		normalizeRole := func(role string) string {
-			switch strings.ToLower(strings.TrimSpace(role)) {
-			case "model":
-				return "assistant"
-			case "assistant", "user", "system", "tool":
-				return strings.ToLower(strings.TrimSpace(role))
-			default:
-				return "assistant"
-			}
-		}
-
-		marshalContent := func(content *genai.Content) string {
-			var b strings.Builder
-			for _, part := range content.Parts {
-				if txt, ok := part.(genai.Text); ok {
-					b.WriteString(string(txt))
-				}
-			}
-			return strings.TrimSpace(b.String())
-		}
-
-		sysPrompt := d.aiAssistantSystemPrompt()
+		sysPrompt := d.aiSystemPromptForRequest(prompt)
 		writeSystemPromptDebugFile(sysPrompt)
-		var messages []message
-		messages = append(messages, message{Role: "system", Content: sysPrompt})
-		for _, entry := range d.chatHistory {
-			contentText := marshalContent(entry)
-			if contentText == "" {
-				continue
-			}
-			messages = append(messages, message{Role: normalizeRole(entry.Role), Content: contentText})
-		}
-		messages = append(messages, message{Role: "user", Content: prompt})
-
-		reqBody := struct {
-			Model    string    `json:"model"`
-			Messages []message `json:"messages"`
-			Stream   bool      `json:"stream"`
-		}{
-			Model:    model,
-			Messages: messages,
-			Stream:   false,
-		}
-		b, err := json.Marshal(reqBody)
+		schema := aiActionPlanJSONSchema()
+		responseStr, err := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, prompt), schema)
 		if err != nil {
-			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error preparing local request: %v"), err)) })
-			return
-		}
-
-		tryRequest := func(path string) (*http.Response, error) {
-			return http.Post(endpoint+path, "application/json", bytes.NewReader(b))
-		}
-
-		paths := []string{"/api/chat", "/api/generate"}
-		var resp *http.Response
-		for _, path := range paths {
-			debugPath := endpoint + path
-			unison.InvokeTask(func() {
-				d.addMessage("Debug", fmt.Sprintf("POST %s (model=%s)", debugPath, model))
-			})
-			resp, err = tryRequest(path)
-			if err != nil {
-				unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error querying local AI server: %v"), err)) })
-				return
-			}
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-			if resp.StatusCode != http.StatusNotFound {
-				body, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				unison.InvokeTask(func() {
-					d.addMessage("AI", fmt.Sprintf(i18n.Text("Local AI server returned %d: %s"), resp.StatusCode, strings.TrimSpace(string(body))))
-				})
-				return
-			}
-			resp.Body.Close()
-		}
-
-		if resp == nil {
-			unison.InvokeTask(func() { d.addMessage("AI", i18n.Text("Local AI server did not respond.")) })
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			unison.InvokeTask(func() {
-				d.addMessage("AI", fmt.Sprintf(i18n.Text("Local AI server returned %d: %s"), resp.StatusCode, strings.TrimSpace(string(body))))
-			})
-			return
-		}
-
-		var result struct {
-			Error   string `json:"error,omitempty"`
-			Message *struct {
-				Role    string `json:"role,omitempty"`
-				Content string `json:"content,omitempty"`
-			} `json:"message,omitempty"`
-			Response string `json:"response,omitempty"`
-			Choices  []struct {
-				Text    string `json:"text,omitempty"`
-				Message struct {
-					Content string `json:"content,omitempty"`
-				} `json:"message,omitempty"`
-			} `json:"choices,omitempty"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error parsing local AI response: %v"), err)) })
-			return
-		}
-		if result.Error != "" {
-			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Local AI server error: %s"), result.Error)) })
-			return
-		}
-
-		responseStr := strings.TrimSpace(result.Response)
-		if responseStr == "" && result.Message != nil {
-			responseStr = strings.TrimSpace(result.Message.Content)
-		}
-		if responseStr == "" && len(result.Choices) > 0 {
-			responseStr = strings.TrimSpace(result.Choices[0].Text)
-			if responseStr == "" {
-				responseStr = strings.TrimSpace(result.Choices[0].Message.Content)
-			}
-		}
-		if responseStr == "" {
-			unison.InvokeTask(func() { d.addMessage("AI", i18n.Text("Local AI server returned no text.")) })
+			unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
 			return
 		}
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "assistant"})
-		retryCh := make(chan []aiRetryItem, 1)
-		unison.InvokeTask(func() { d.handleAIResponseWithCh(responseStr, retryCh) })
-		retryItems := <-retryCh
-		if len(retryItems) > 0 {
-			correctionPrompt := buildAIRetryPrompt(retryItems)
-			corrMessages := []message{{Role: "system", Content: d.aiAssistantSystemPrompt()}}
-			for _, entry := range d.chatHistory {
-				ct := marshalContent(entry)
-				if ct != "" {
-					corrMessages = append(corrMessages, message{Role: normalizeRole(entry.Role), Content: ct})
-				}
-			}
-			corrMessages = append(corrMessages, message{Role: "user", Content: correctionPrompt})
-			corrReqBody := struct {
-				Model    string    `json:"model"`
-				Messages []message `json:"messages"`
-				Stream   bool      `json:"stream"`
-			}{Model: model, Messages: corrMessages, Stream: false}
-			corrB, marshalErr := json.Marshal(corrReqBody)
-			if marshalErr == nil {
-				var corrStr string
-				for _, path := range paths {
-					corrResp, corrErr := http.Post(endpoint+path, "application/json", bytes.NewReader(corrB)) //nolint:noctx
-					if corrErr != nil {
-						break
-					}
-					if corrResp.StatusCode != http.StatusOK {
-						corrResp.Body.Close()
-						continue
-					}
-					var corrResult struct {
-						Message *struct {
-							Content string `json:"content,omitempty"`
-						} `json:"message,omitempty"`
-						Response string `json:"response,omitempty"`
-					}
-					decodeErr := json.NewDecoder(corrResp.Body).Decode(&corrResult)
-					corrResp.Body.Close()
-					if decodeErr == nil {
-						corrStr = strings.TrimSpace(corrResult.Response)
-						if corrStr == "" && corrResult.Message != nil {
-							corrStr = strings.TrimSpace(corrResult.Message.Content)
+
+		resolution, err := d.resolveAIResponseText(responseStr)
+		if err != nil {
+			unison.InvokeTask(func() {
+				d.addMessage("AI", responseStr)
+				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI library catalog could not be prepared: %v"), err))
+			})
+			return
+		}
+		if isInitialBuildRequest && resolution.Parsed && aiActionPlanNeedsCharacterBuildCompletion(resolution.Plan) {
+			completionPrompt := aiBuildCharacterExpansionPrompt(prompt, buildParams, resolution.Plan)
+			completionResponse, completionErr := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, completionPrompt), schema)
+			if completionErr != nil {
+				resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI initial character build was too sparse and the automatic completion pass failed."))
+			} else if strings.TrimSpace(completionResponse) != "" {
+				completionResolution, completionResolveErr := d.resolveAIResponseText(completionResponse)
+				switch {
+				case completionResolveErr != nil:
+					resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI automatic character-build completion could not be resolved: %v"), completionResolveErr))
+				case completionResolution.Parsed:
+					mergedPlan := resolution.Plan
+					mergeAIActionPlan(&mergedPlan, completionResolution.Plan)
+					mergedResolution, mergedErr := d.resolveAIActionPlanResult(mergedPlan)
+					if mergedErr != nil {
+						resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI automatic character-build completion could not be resolved: %v"), mergedErr))
+					} else {
+						resolution = mergedResolution
+						if aiActionPlanNeedsCharacterBuildCompletion(resolution.Plan) {
+							resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI returned a partial first-pass build; ask for more detail if you want further refinement."))
 						}
 					}
-					break
-				}
-				if corrStr != "" {
-					d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionPrompt)}, Role: "user"})
-					d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(corrStr)}, Role: "assistant"})
-					doneCh := make(chan struct{}, 1)
-					unison.InvokeTask(func() { d.applyCorrectionResponse(corrStr); doneCh <- struct{}{} })
-					<-doneCh
+				case strings.Contains(completionResponse, "{"):
+					resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI automatic character-build completion could not be parsed and was skipped."))
 				}
 			}
 		}
+		if resolution.Parsed && len(resolution.RetryItems) > 0 {
+			followUpPrompt := aiBuildLocalResolverAlternativePrompt(resolution.RetryItems)
+			followUpResponse, retryErr := d.queryLocalModel(endpoint, model, d.buildLocalChatMessagesFromHistory(sysPrompt, d.chatHistory, followUpPrompt), schema)
+			if retryErr != nil {
+				resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI follow-up alternatives could not be generated; unresolved items were skipped."))
+			} else if strings.TrimSpace(followUpResponse) != "" {
+				followUpResolution, followUpResolveErr := d.resolveAIResponseText(followUpResponse)
+				switch {
+				case followUpResolveErr != nil:
+					resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be resolved: %v"), followUpResolveErr))
+				case followUpResolution.Parsed:
+					mergedPlan := aiActionPlanWithoutRetryItems(resolution.Plan, resolution.RetryItems)
+					mergeAIActionPlan(&mergedPlan, followUpResolution.Plan)
+					mergedResolution, mergedErr := d.resolveAIActionPlanResult(mergedPlan)
+					if mergedErr != nil {
+						resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be resolved: %v"), mergedErr))
+					} else {
+						if aiActionPlanItemCount(followUpResolution.Plan) < len(resolution.RetryItems) {
+							mergedResolution.Warnings = append(mergedResolution.Warnings, i18n.Text("Warning: some unresolved items were skipped because the follow-up response did not provide alternatives for all of them."))
+						}
+						resolution = mergedResolution
+					}
+				case strings.Contains(followUpResponse, "{"):
+					resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI follow-up alternatives could not be parsed and were skipped."))
+				}
+			}
+		}
+
+		doneCh := make(chan struct{}, 1)
+		unison.InvokeTask(func() {
+			d.addMessage("AI", responseStr)
+			if !resolution.Parsed {
+				if strings.Contains(responseStr, "{") {
+					d.addMessage("AI", i18n.Text("Structured update data was detected, but it could not be parsed into a character-sheet update."))
+				}
+				doneCh <- struct{}{}
+				return
+			}
+
+			warnings := append([]string(nil), resolution.Warnings...)
+			retryItems := append([]aiRetryItem(nil), resolution.RetryItems...)
+			applied := false
+			if hasAIActionPlanContent(resolution.ResolvedPlan) {
+				applyWarnings, applyRetryItems, applyErr := d.applyAIActionPlan(resolution.ResolvedPlan)
+				if applyErr != nil {
+					d.addMessage("AI", fmt.Sprintf(i18n.Text("AI plan could not be applied: %v"), applyErr))
+					doneCh <- struct{}{}
+					return
+				}
+				warnings = append(warnings, applyWarnings...)
+				retryItems = append(retryItems, applyRetryItems...)
+				applied = true
+			}
+			for _, warning := range warnings {
+				d.addMessage("AI", warning)
+			}
+			if len(retryItems) != 0 {
+				d.addMessage("AI", i18n.Text("Some items still need exact library selection and were skipped."))
+			}
+			if applied {
+				d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+			}
+			doneCh <- struct{}{}
+		})
+		<-doneCh
 	}()
 }

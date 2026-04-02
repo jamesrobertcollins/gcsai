@@ -121,6 +121,10 @@ const (
 	Scale600ItemID
 	DockUnDockItemID
 	ToolsMenuID
+	AIChatItemID
+	AIResolverDebugLogItemID
+	AIResolverClearTelemetryItemID
+	AIResolverAliasMappingsItemID
 
 	FirstNonContainerMarker // Keep this block grouped together
 	NewCarriedEquipmentItemID
@@ -279,6 +283,11 @@ func (s menuBarScope) setupEditMenu(bar unison.Menu) {
 func (s menuBarScope) createToolsMenu(f unison.MenuFactory) unison.Menu {
 	m := f.NewMenu(ToolsMenuID, i18n.Text("Tools"), nil)
 	m.InsertItem(-1, aiChatAction.NewMenuItem(f))
+	m.InsertSeparator(-1, false)
+	m.InsertItem(-1, aiResolverDebugLogAction.NewMenuItem(f))
+	m.InsertItem(-1, aiResolverClearTelemetryAction.NewMenuItem(f))
+	m.InsertSeparator(-1, false)
+	m.InsertItem(-1, aiResolverAliasMappingsAction.NewMenuItem(f))
 	return m
 }
 
