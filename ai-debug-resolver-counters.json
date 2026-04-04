@@ -1,0 +1,136 @@
+{
+  "entries": [
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Mindlink\"\u001fnotes=\"Groucho\"\u001fdescription=\"Allows Thomas to hear the soul trapped inside Groucho.\"\u001fcandidates=[tGge_qg7LR_teowyg:Binding, tb1cIXijh7je3wHbx:Mind Reading, tZz0JLuwVRoQYQiTM:Climbing Line, tsqiEAsVEo9LYLa_Z:Mind Shield, tRaD38dfYa7Iuyh97:Mind Control]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.3994251Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Mindlink\"",
+        "notes=\"Groucho\"",
+        "description=\"Allows Thomas to hear the soul trapped inside Groucho.\"",
+        "candidates=[tGge_qg7LR_teowyg:Binding, tb1cIXijh7je3wHbx:Mind Reading, tZz0JLuwVRoQYQiTM:Climbing Line, tsqiEAsVEo9LYLa_Z:Mind Shield, tRaD38dfYa7Iuyh97:Mind Control]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"1967 Chevy Impala, Armored\"\u001fdescription=\"Thomas's prized vehicle, heavily reinforced with armor plating, especially around the engine compartment.\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.3849123Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"1967 Chevy Impala, Armored\"",
+        "description=\"Thomas's prized vehicle, heavily reinforced with armor plating, especially around the engine compartment.\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Groucho the Magical Hammer\"\u001fdescription=\"A magical hammer containing an unknown soul. It communicates telepathically with Thomas. Deals extra damage and double knockback to Deadites.\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.3700553Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"Groucho the Magical Hammer\"",
+        "description=\"A magical hammer containing an unknown soul. It communicates telepathically with Thomas. Deals extra damage and double knockback to Deadites.\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=disadvantages\u001finput=\"Vow\"\u001fnotes=\"Vanquish the Evil Dead\"\u001fcandidates=[t3Q10LFq0_EnMkMKY:Vow, t5R0c_iujWXeXusIu:Vow, tbIGLVMiw5MwuaCiq:Low TL, tV4gyWuUR15RG-LOJ:Compulsive Vowing, tSlbGWWYeWo8Z9a7A:Vow (Three Treasures)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4044248Z",
+      "fields": [
+        "category=disadvantages",
+        "input=\"Vow\"",
+        "notes=\"Vanquish the Evil Dead\"",
+        "candidates=[t3Q10LFq0_EnMkMKY:Vow, t5R0c_iujWXeXusIu:Vow, tbIGLVMiw5MwuaCiq:Low TL, tV4gyWuUR15RG-LOJ:Compulsive Vowing, tSlbGWWYeWo8Z9a7A:Vow (Three Treasures)]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=equipment\u001finput=\"Tool Kit\"\u001fnotes=\"Mechanic\"\u001fquantity=1\u001fcandidates=[eu539JqIeos-MwlzR:Tool Kit, Mini, eivIcCttLqvRK1ucp:Tool Kit, Shop, eUMNSZB3IkYVqrGiC:Armoury  Toolkit, e8mxl4qjoYmAYfXa9:Mechanic  Toolkit, eF-uqMAfYY71sQgTO:Tool Kit, Backpack]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.6520616Z",
+      "fields": [
+        "category=equipment",
+        "input=\"Tool Kit\"",
+        "notes=\"Mechanic\"",
+        "quantity=1",
+        "candidates=[eu539JqIeos-MwlzR:Tool Kit, Mini, eivIcCttLqvRK1ucp:Tool Kit, Shop, eUMNSZB3IkYVqrGiC:Armoury  Toolkit, e8mxl4qjoYmAYfXa9:Mechanic  Toolkit, eF-uqMAfYY71sQgTO:Tool Kit, Backpack]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Dislikes chainsaws (too messy)\"\u001fcandidates=[tid4e6X7ckyvY_UJQ:Dislikes @Item@, toPfyMD2mDr7lfk1Q:Dislike, tkr9rivWg8KtK_oDA:Distinctive Features, tFoWqDF5dGwBe91JO:Distinctive Speech, tPwuEVY8o8AtpEzJQ:Likes @Item@]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4184238Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Dislikes chainsaws (too messy)\"",
+        "candidates=[tid4e6X7ckyvY_UJQ:Dislikes @Item@, toPfyMD2mDr7lfk1Q:Dislike, tkr9rivWg8KtK_oDA:Distinctive Features, tFoWqDF5dGwBe91JO:Distinctive Speech, tPwuEVY8o8AtpEzJQ:Likes @Item@]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Drinks cheap beer\"\u001fcandidates=[tUAIeEBXuWXXZaqks:Dreamer, tdjt87VsbW_--Sa0k:Philosophical Belief, tFoWqDF5dGwBe91JO:Distinctive Speech, trtMcFyuaPbLz3vqz:Quirk (Species Scent), toWbchZtm5-eZnms4:Disciplined]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4219219Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Drinks cheap beer\"",
+        "candidates=[tUAIeEBXuWXXZaqks:Dreamer, tdjt87VsbW_--Sa0k:Philosophical Belief, tFoWqDF5dGwBe91JO:Distinctive Speech, trtMcFyuaPbLz3vqz:Quirk (Species Scent), toWbchZtm5-eZnms4:Disciplined]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Protective of his car\"\u001fcandidates=[tF_jzafw5o8ISW9DR:Perfectionist, tkr9rivWg8KtK_oDA:Distinctive Features, tErK4cLrSt07-XLYQ:Distinctive Features, tK080zaclDsI8YrPk:Expensive Habit, t7kD_Oii06aoDZ8_G:Never raises voice]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4159223Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Protective of his car\"",
+        "candidates=[tF_jzafw5o8ISW9DR:Perfectionist, tkr9rivWg8KtK_oDA:Distinctive Features, tErK4cLrSt07-XLYQ:Distinctive Features, tK080zaclDsI8YrPk:Expensive Habit, t7kD_Oii06aoDZ8_G:Never raises voice]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Spouts cheesy one-liners\"\u001fcandidates=[t90_VroM128_RSckF:Aches and Pains, tvwO747xb6rVukcOt:Odious Personal Habit, tQs5d-zYKkdCUen1n:Secret Powers, tCUFTPIY7vLictkkF:Sleepy Drinker, tGU6pQdbTEtWypJx7:Speech Mannerism]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4099239Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Spouts cheesy one-liners\"",
+        "candidates=[t90_VroM128_RSckF:Aches and Pains, tvwO747xb6rVukcOt:Odious Personal Habit, tQs5d-zYKkdCUen1n:Secret Powers, tCUFTPIY7vLictkkF:Sleepy Drinker, tGU6pQdbTEtWypJx7:Speech Mannerism]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Talks to his hammer\"\u001fcandidates=[tO839AdROEWjoaFny:Talkative, tzm_FlN-4Wc1JUKjq:Fashion Disaster, tPPrNIEjVjrQG3hby:Fast Talker, tXYCTkcONvTSphSoe:Bulky Frame, tbUib67qgHjA0xI0U:Math-Shy]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4129242Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Talks to his hammer\"",
+        "candidates=[tO839AdROEWjoaFny:Talkative, tzm_FlN-4Wc1JUKjq:Fashion Disaster, tPPrNIEjVjrQG3hby:Fast Talker, tXYCTkcONvTSphSoe:Bulky Frame, tbUib67qgHjA0xI0U:Math-Shy]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=skills\u001finput=\"Fast-Draw\"\u001fnotes=\"Pistol\"\u001fpoints=\"1\"\u001fcandidates=[sY9q_60yrVFk1zB9C:Fast-Draw, s5xh6bANmCGbYersa:Fast-Draw, s0itc_sZNPlEbfRf6:Fast-Draw, sCG_CPJOhGXTZ7IjX:Fast-Draw (Ammo), snrypTCt6M0Gr1jm7:Fast-Draw (Arrow)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T23:23:04.4981147Z",
+      "fields": [
+        "category=skills",
+        "input=\"Fast-Draw\"",
+        "notes=\"Pistol\"",
+        "points=\"1\"",
+        "candidates=[sY9q_60yrVFk1zB9C:Fast-Draw, s5xh6bANmCGbYersa:Fast-Draw, s0itc_sZNPlEbfRf6:Fast-Draw, sCG_CPJOhGXTZ7IjX:Fast-Draw (Ammo), snrypTCt6M0Gr1jm7:Fast-Draw (Arrow)]"
+      ]
+    }
+  ]
+}

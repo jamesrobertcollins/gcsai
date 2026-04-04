@@ -267,6 +267,70 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestAIIsExplicitApprovalAcceptsCommonConfirmationPhrases(t *testing.T) {
+	approved := []string{
+		"Approve",
+		"approved",
+		"yes",
+		"okay",
+		"go ahead",
+		"looks good",
+		"create it",
+		"build the character",
+		"generate the sheet",
+	}
+	for _, input := range approved {
+		if !aiIsExplicitApproval(input) {
+			t.Fatalf("expected %q to count as approval", input)
+		}
+	}
+
+	notApproved := []string{
+		"change the hair color",
+		"not yet",
+		"do not approve",
+		"add one more detail",
+	}
+	for _, input := range notApproved {
+		if aiIsExplicitApproval(input) {
+			t.Fatalf("expected %q to not count as approval", input)
+		}
+	}
+}
+
+func TestAIBuildBaselineApprovalMessageClarifiesSheetCreationState(t *testing.T) {
+	message := aiBuildBaselineApprovalMessage(aiDraftProfile{
+		CharacterConcept: aiFlexibleString("Noir Detective"),
+		TechLevel:        aiFlexibleString("8"),
+		CPLimit:          aiFlexibleString("150"),
+	})
+	checks := []string{
+		"No character sheet has been created yet.",
+		"Type \"Approve\", \"yes\", or \"go ahead\" to begin generation",
+		"Character Concept: Noir Detective",
+	}
+	for _, check := range checks {
+		if !strings.Contains(message, check) {
+			t.Fatalf("expected approval message to contain %q, got %q", check, message)
+		}
+	}
+}
+
+func TestAIBuildBaselineEditModeMessageClarifiesNoSheetYet(t *testing.T) {
+	message := aiBuildBaselineEditModeMessage()
+	checks := []string{
+		"generation has not started",
+		"no character sheet has been created",
+		"baseline-edit mode",
+		"Reply with \"Approve\", \"yes\", or \"go ahead\" to start generation.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(message, check) {
+			t.Fatalf("expected baseline edit mode message to contain %q, got %q", check, message)
+		}
+	}
+}
+
 func TestAIDraftProfileToCharacterRequestParams(t *testing.T) {
 	defaults := aiCharacterRequestParams{TotalCP: 125, TechLevel: "3", Concept: "Fallback", StartingWealth: 1000, DisadvantageLimit: 30}
 	got := aiDraftProfileToCharacterRequestParams(aiDraftProfile{

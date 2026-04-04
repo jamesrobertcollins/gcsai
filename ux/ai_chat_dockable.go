@@ -3349,6 +3349,9 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 					d.executeLocalThreePhaseGeneration(endpoint, model, session.OriginalRequest, session.Params)
 					return
 				}
+				unison.InvokeTask(func() {
+					d.addMessage("AI", aiBuildBaselineEditModeMessage())
+				})
 				session.State = aiBuildSessionStateGathering
 				session.GatheringLog = nil
 			}

@@ -165,7 +165,12 @@ When responding outside JSON, keep the answer concise, factual, and directly tie
 	aiBuildContinuationCategoryPattern  = regexp.MustCompile(`(?i)\b(?:advantages?|disadvantages?|quirks?|skills?|attributes?|equipment|gear|traits?|profile)\b`)
 	aiBuildContinuationRemainingPattern = regexp.MustCompile(`(?i)\b(?:remaining|rest|left|leftover|unspent)\b`)
 	aiLoosePositiveIntPattern           = regexp.MustCompile(`\d+`)
-	aiExplicitApprovalPattern           = regexp.MustCompile(`(?i)\bapprove(?:d)?\b`)
+	aiExplicitApprovalPatterns          = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^\s*approve(?:d)?\s*[.!]*\s*$`),
+		regexp.MustCompile(`(?i)^\s*(?:yes|yep|yeah|yup|ok|okay|sure)\s*(?:please)?\s*[.!]*\s*$`),
+		regexp.MustCompile(`(?i)^\s*(?:go ahead|proceed|continue|looks good|that looks good|sounds good|that sounds good|works for me|that works)\s*[.!]*\s*$`),
+		regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:do\s+it|create|build|generate|make)\s+(?:it|the\s+(?:sheet|character))\s*[.!]*\s*$`),
+	}
 )
 
 func aiRenderStage1SystemPrompt(data aiStage1SystemPromptData) string {
@@ -601,7 +606,11 @@ func aiFormatDraftProfileForPrompt(draft aiDraftProfile, includeBlank bool) stri
 }
 
 func aiBuildBaselineApprovalMessage(draft aiDraftProfile) string {
-	return strings.TrimSpace("Here is the baseline data. Type \"Approve\" to begin generation, or tell me what to change.\n\n" + aiFormatDraftProfileForPrompt(draft, true))
+	return strings.TrimSpace("Here is the baseline data. No character sheet has been created yet. Type \"Approve\", \"yes\", or \"go ahead\" to begin generation, or tell me what to change.\n\n" + aiFormatDraftProfileForPrompt(draft, true))
+}
+
+func aiBuildBaselineEditModeMessage() string {
+	return strings.TrimSpace("Baseline approval has not been given yet, so generation has not started and no character sheet has been created. I am staying in baseline-edit mode until you approve the baseline data. Reply with \"Approve\", \"yes\", or \"go ahead\" to start generation.")
 }
 
 func aiBuildGenerationRequestFromDraftProfile(originalRequest string, draft aiDraftProfile) string {
@@ -622,7 +631,12 @@ func aiIsExplicitApproval(request string) bool {
 	if request == "" {
 		return false
 	}
-	return aiExplicitApprovalPattern.MatchString(request)
+	for _, pattern := range aiExplicitApprovalPatterns {
+		if pattern.MatchString(request) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *aiChatDockable) prepareAIRequest(request string) aiPreparedChatRequest {
