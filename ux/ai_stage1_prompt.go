@@ -639,7 +639,7 @@ func (d *aiChatDockable) aiDefaultCharacterRequestParams(request string) aiChara
 }
 
 func aiCharacterBuildActionCount(plan aiActionPlan) int {
-	return len(plan.Attributes) + len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Equipment)
+	return len(plan.Attributes) + len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Spells) + len(plan.Equipment)
 }
 
 func aiActionPlanNeedsCharacterBuildCompletion(plan aiActionPlan) bool {
@@ -654,13 +654,13 @@ func aiActionPlanNeedsCharacterBuildCompletion(plan aiActionPlan) bool {
 	if traitCount > 0 {
 		categoryCount++
 	}
-	if len(plan.Skills) > 0 {
+	if len(plan.Skills)+len(plan.Spells) > 0 {
 		categoryCount++
 	}
 	if len(plan.Equipment) > 0 {
 		categoryCount++
 	}
-	if len(plan.Attributes) == 0 || len(plan.Skills) == 0 {
+	if len(plan.Attributes) == 0 || len(plan.Skills)+len(plan.Spells) == 0 {
 		return true
 	}
 	if traitCount == 0 && len(plan.Equipment) == 0 {
@@ -680,8 +680,8 @@ func aiCharacterBuildMissingSections(plan aiActionPlan) []string {
 	if len(plan.Advantages)+len(plan.Disadvantages)+len(plan.Quirks) == 0 {
 		missing = append(missing, "advantages/disadvantages/quirks")
 	}
-	if len(plan.Skills) == 0 {
-		missing = append(missing, "skills")
+	if len(plan.Skills)+len(plan.Spells) == 0 {
+		missing = append(missing, "skills/spells")
 	}
 	if len(plan.Equipment) == 0 {
 		missing = append(missing, "equipment")
@@ -769,7 +769,7 @@ Disadvantage limit: up to %d points.
 - disadvantages
 - quirks
 
-Do not include skills, equipment, or spend_all_cp in this phase.
+Do not include skills, spells, equipment, or spend_all_cp in this phase.
 For a fresh build, include profile fields that materially complete the concept. Prefer setting a name plus age, gender, height, weight, eyes, hair, skin, handedness, and title when you can infer them reasonably.
 
 Budget guidance for this chassis phase:
@@ -808,12 +808,14 @@ Exactly %d CP remain after Phase 1.
 
 %sThis phase may output ONLY these JSON fields:
 - skills
+- spells
 - equipment
 
 Do not include profile, attributes, advantages, disadvantages, quirks, or spend_all_cp in this phase.
 
 Instructions:
 - Spend all remaining character points on an expansive, concept-appropriate list of skills.
+- If the concept is a magic user, treat spells as part of the skill budget and return them in the "spells" field.
 - Equipment may be included when relevant, but the Go application handles CP math; focus your budgeting on skills.
 - Prefer a broad professional package with occupational, background, hobby, and practical skills, not just a few headline combat skills.
 - Avoid padding the build with multiple near-duplicate skill-family variants. In most concepts, choose at most one variant each of Area Knowledge, Current Affairs, Connoisseur, Savoir-Faire, Expert Skill, Hobby Skill, and similar broad families unless the concept clearly requires more.

@@ -482,6 +482,7 @@ func TestGetThematicVocabularySplitsPerksFromAdvantages(t *testing.T) {
 		&aiLibraryCatalogEntry{Category: aiLibraryCategoryDisadvantage, ID: "dis-overconfidence", Name: "Overconfidence", DisplayName: "Overconfidence", BaseName: "Overconfidence", PointCost: -5},
 		&aiLibraryCatalogEntry{Category: aiLibraryCategoryQuirk, ID: "quirk-tools", Name: "Keeps tools immaculate", DisplayName: "Keeps tools immaculate", BaseName: "Keeps tools immaculate", PointCost: -1},
 		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-mechanic", Name: "Mechanic", DisplayName: "Mechanic (Automobile)", BaseName: "Mechanic", Specialization: "Automobile"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySpell, ID: "spell-mend", Name: "Mend", DisplayName: "Mend", BaseName: "Mend"},
 	)
 	globalAILibraryCatalogCache.signature = signature
 
@@ -489,6 +490,7 @@ func TestGetThematicVocabularySplitsPerksFromAdvantages(t *testing.T) {
 	checks := []string{
 		"Thematic Canonical GURPS Vocabulary:",
 		"Skills: Mechanic (Automobile)",
+		"Spells: Mend",
 		"Advantages: Signature Gear",
 		"Perks: Craftiness",
 		"Disadvantages: Overconfidence",

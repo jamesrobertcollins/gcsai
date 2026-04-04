@@ -208,7 +208,7 @@ func aiBuildLocalResolverAlternativePrompt(items []aiRetryItem) string {
 		}
 		builder.WriteByte('\n')
 	}
-	builder.WriteString("Return ONLY a single JSON object with replacement entries using the same category fields (advantages, disadvantages, quirks, skills, equipment).\n")
+	builder.WriteString("Return ONLY a single JSON object with replacement entries using the same category fields (advantages, disadvantages, quirks, skills, spells, equipment).\n")
 	builder.WriteString("When candidates are listed, use the exact candidate id and candidate name shown.\n")
 	builder.WriteString("Use valid GURPS 4e names, preserve points, quantity, notes, and description when they still fit the replacement, and use \"notes\" only for nameable values.\n")
 	builder.WriteString("If no valid replacement exists, omit that item.\n")
@@ -246,6 +246,12 @@ func aiActionPlanWithoutRetryItems(plan aiActionPlan, retryItems []aiRetryItem) 
 			out.Skills = append(out.Skills, action)
 		}
 	}
+	for _, action := range plan.Spells {
+		points := firstNonEmptyString(action.Points.String(), action.Value.String())
+		if _, exists := keys[aiActionPlanItemKey(string(aiLibraryCategorySpell), action.Name.String(), action.Notes.String(), action.Description.String(), points, 0)]; !exists {
+			out.Spells = append(out.Spells, action)
+		}
+	}
 	for _, action := range plan.Equipment {
 		if _, exists := keys[aiActionPlanItemKey(string(aiLibraryCategoryEquipment), action.Name.String(), action.Notes.String(), action.Description.String(), action.Points.String(), action.Quantity.Int())]; !exists {
 			out.Equipment = append(out.Equipment, action)
@@ -271,6 +277,7 @@ func aiFilterCorrectionPlan(plan aiActionPlan, retryItems []aiRetryItem) aiActio
 	disadvantageItems, disadvantageUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryDisadvantage))
 	quirkItems, quirkUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryQuirk))
 	skillItems, skillUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategorySkill))
+	spellItems, spellUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategorySpell))
 	equipmentItems, equipmentUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryEquipment))
 
 	for _, action := range plan.Advantages {
@@ -291,6 +298,11 @@ func aiFilterCorrectionPlan(plan aiActionPlan, retryItems []aiRetryItem) aiActio
 	for _, action := range plan.Skills {
 		if aiConsumeMatchingSkillCorrection(skillItems, skillUsed, action) {
 			filtered.Skills = append(filtered.Skills, action)
+		}
+	}
+	for _, action := range plan.Spells {
+		if aiConsumeMatchingSpellCorrection(spellItems, spellUsed, action) {
+			filtered.Spells = append(filtered.Spells, action)
 		}
 	}
 	for _, action := range plan.Equipment {
@@ -318,6 +330,10 @@ func aiConsumeMatchingNamedCorrection(items []aiRetryItem, used []bool, category
 
 func aiConsumeMatchingSkillCorrection(items []aiRetryItem, used []bool, action aiSkillAction) bool {
 	return aiConsumeMatchingCorrection(items, used, string(aiLibraryCategorySkill), normalizeAISelectionID(action.ID.String()), normalizeLookupText(action.Name.String()))
+}
+
+func aiConsumeMatchingSpellCorrection(items []aiRetryItem, used []bool, action aiSkillAction) bool {
+	return aiConsumeMatchingCorrection(items, used, string(aiLibraryCategorySpell), normalizeAISelectionID(action.ID.String()), normalizeLookupText(action.Name.String()))
 }
 
 func aiConsumeMatchingCorrection(items []aiRetryItem, used []bool, category, id, name string) bool {
@@ -361,7 +377,7 @@ func aiCorrectionActionMatchesRetryItem(category, id, name string, item aiRetryI
 }
 
 func aiActionPlanItemCount(plan aiActionPlan) int {
-	return len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Equipment)
+	return len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Spells) + len(plan.Equipment)
 }
 
 func strconvQuote(text string) string {

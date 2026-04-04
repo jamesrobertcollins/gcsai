@@ -38,6 +38,7 @@ func TestAIPhase2OnlyActionPlanSnapsSkillPoints(t *testing.T) {
 			{Name: aiFlexibleString("Brawling"), Points: aiFlexibleString("3")},
 			{Name: aiFlexibleString("Stealth"), Value: aiFlexibleString("10")},
 		},
+		Spells:    []aiSkillAction{{Name: aiFlexibleString("Fireball"), Points: aiFlexibleString("3")}},
 		Equipment: []aiNamedAction{{Name: aiFlexibleString("Tool Kit"), Quantity: aiFlexibleInt(1)}},
 	}))
 	if len(plan.Attributes) != 0 {
@@ -54,6 +55,12 @@ func TestAIPhase2OnlyActionPlanSnapsSkillPoints(t *testing.T) {
 	}
 	if got := plan.Skills[1].Value.String(); got != "" {
 		t.Fatalf("expected snapped skill value field to be cleared, got %q", got)
+	}
+	if len(plan.Spells) != 1 {
+		t.Fatalf("expected 1 spell, got %d", len(plan.Spells))
+	}
+	if got := plan.Spells[0].Points.String(); got != "2" {
+		t.Fatalf("expected spell points to snap to 2, got %q", got)
 	}
 }
 
@@ -132,9 +139,9 @@ func TestAIParseGenerationBlueprintResponse(t *testing.T) {
 }
 
 func TestAIFilterThematicVocabularySections(t *testing.T) {
-	vocabulary := "Thematic Canonical GURPS Vocabulary:\n- Skills: Mechanic (Automobile)\n- Advantages: Signature Gear\n- Perks: Craftiness\n- Disadvantages: Overconfidence\n- Quirks: Keeps tools immaculate"
+	vocabulary := "Thematic Canonical GURPS Vocabulary:\n- Skills: Mechanic (Automobile)\n- Spells: Mend\n- Advantages: Signature Gear\n- Perks: Craftiness\n- Disadvantages: Overconfidence\n- Quirks: Keeps tools immaculate"
 	filtered := aiFilterThematicVocabularySections(vocabulary, "Disadvantages", "Quirks")
-	if strings.Contains(filtered, "Skills") || strings.Contains(filtered, "Advantages") || strings.Contains(filtered, "Perks") {
+	if strings.Contains(filtered, "Skills") || strings.Contains(filtered, "Spells") || strings.Contains(filtered, "Advantages") || strings.Contains(filtered, "Perks") {
 		t.Fatalf("expected filtered vocabulary to exclude non-story sections, got %q", filtered)
 	}
 	if !strings.Contains(filtered, "Disadvantages: Overconfidence") || !strings.Contains(filtered, "Quirks: Keeps tools immaculate") {

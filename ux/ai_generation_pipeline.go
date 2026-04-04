@@ -32,6 +32,7 @@ var (
 	}
 	aiPhase2RecommendedTermLimits = map[aiLibraryCategory]int{
 		aiLibraryCategorySkill:     12,
+		aiLibraryCategorySpell:     8,
 		aiLibraryCategoryEquipment: 8,
 	}
 	aiLocalCorrectionQueryModel = func(d *aiChatDockable, endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
@@ -281,6 +282,17 @@ func aiAttributesOnlyActionPlan(plan aiActionPlan) aiActionPlan {
 	return aiActionPlan{Attributes: append([]aiAttributeAction(nil), plan.Attributes...)}
 }
 
+func aiAdvantagesOnlyActionPlan(plan aiActionPlan) aiActionPlan {
+	return aiActionPlan{Advantages: append([]aiNamedAction(nil), plan.Advantages...)}
+}
+
+func aiSkillsAndSpellsOnlyActionPlan(plan aiActionPlan) aiActionPlan {
+	return aiSnapSkillPointsInPlan(aiActionPlan{
+		Skills: append([]aiSkillAction(nil), plan.Skills...),
+		Spells: append([]aiSkillAction(nil), plan.Spells...),
+	})
+}
+
 func aiBuildLocalBlueprintPrompts(originalPrompt string, params aiCharacterRequestParams) (systemPrompt, userPrompt string) {
 	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e character-planning function.
 Return exactly one top-level JSON object and nothing else.
@@ -352,6 +364,67 @@ Return exactly one JSON object with attributes only.`, params.Concept, strings.J
 	return systemPrompt, userPrompt
 }
 
+func aiBuildLocalAdvantagesPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, advantageBucket int, summary, vocabulary string) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e advantages and perks generator.
+Return exactly one top-level JSON object and nothing else.
+You may output ONLY the "advantages" field.
+Generate advantages and perks that fit the approved concept, themes, and current sheet state.
+Do not include attributes, disadvantages, quirks, skills, spells, equipment, profile, or spend_all_cp.
+Stay within the advantages bucket supplied by the user prompt.
+
+Current character sheet context:
+%s`, summary))
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 4: Advantages & Perks.
+Approved character concept: %s
+Core themes: %s
+Advantages bucket: do not exceed %d CP.
+Approved baseline data:
+%s
+
+Spend this budget on advantages and perks that fit the character concept.
+Consider purchasing Languages and Cultural Familiarities if the background implies them.
+Prefer canonical names from this targeted vocabulary when they fit:
+%s
+
+Return exactly one JSON object with advantages only.`, params.Concept, strings.Join(themes, ", "), advantageBucket, originalPrompt, strings.TrimSpace(vocabulary)))
+	return systemPrompt, userPrompt
+}
+
+func aiBuildLocalSkillsPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, budget GenerationBudget, summary, vocabulary string) (systemPrompt, userPrompt string) {
+	totalSkillBucket := budget.SkillPoints()
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e skills and spells generator.
+Return exactly one top-level JSON object and nothing else.
+You may output ONLY these JSON fields:
+- skills
+- spells
+Generate a broad, concept-fitting professional package.
+Do not include profile, attributes, advantages, disadvantages, quirks, equipment, or spend_all_cp.
+If the character concept is a magic user, treat Spells as Skills and put them in the "spells" field.
+Format TL-dependent skills correctly by appending the Tech Level, for example: Computer Operation/TL8.
+Stay within the combined skills bucket supplied by the user prompt.
+
+Current character sheet context:
+%s`, summary))
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 5: Skills & Spells.
+Approved character concept: %s
+Core themes: %s
+Remaining combined Skills bucket: do not exceed %d CP total.
+Budget split guidance: spend roughly 70-80%% on Core Professional skills and 20-30%% on Background/Hobby skills.
+Current planning target: about %d CP for Core Professional skills and %d CP for Background/Hobby skills.
+Approved baseline data:
+%s
+
+Build an expansive skill package that fits the concept and themes.
+If the character concept is a magic user, treat Spells as Skills. Allocate a portion of your Core Professional budget to Spells.
+Format TL-dependent skills correctly by appending the Tech Level (e.g., Computer Operation/TL8).
+Use integer point requests. The Go application will snap skills and spells to valid GURPS point values.
+Prefer canonical names from this targeted vocabulary when they fit:
+%s
+
+Return exactly one JSON object with skills and spells only.`, params.Concept, strings.Join(themes, ", "), totalSkillBucket, budget.CoreSkills, budget.BackgroundSkills, originalPrompt, strings.TrimSpace(vocabulary)))
+	return systemPrompt, userPrompt
+}
+
 func (d *aiChatDockable) localGenerationPointsBreakdown() (gurps.PointsBreakdown, error) {
 	resultCh := make(chan struct {
 		breakdown gurps.PointsBreakdown
@@ -392,8 +465,32 @@ func aiAttributeSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) in
 	return spent
 }
 
+func aiAdvantageSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
+	spent := fxp.AsInteger[int](after.Advantages - before.Advantages)
+	if spent < 0 {
+		return 0
+	}
+	return spent
+}
+
+func aiSkillSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
+	spent := fxp.AsInteger[int](after.Skills - before.Skills)
+	if spent < 0 {
+		return 0
+	}
+	return spent
+}
+
+func aiSpellSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
+	spent := fxp.AsInteger[int](after.Spells - before.Spells)
+	if spent < 0 {
+		return 0
+	}
+	return spent
+}
+
 func aiResolvedActionPlanCount(plan aiActionPlan) int {
-	return len(plan.Attributes) + len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Equipment)
+	return len(plan.Attributes) + len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Spells) + len(plan.Equipment)
 }
 
 func aiRetryItemsContainPointBearingCategories(items []aiRetryItem) bool {
@@ -443,16 +540,26 @@ func aiPhase1OnlyActionPlan(plan aiActionPlan) aiActionPlan {
 func aiPhase2OnlyActionPlan(plan aiActionPlan) aiActionPlan {
 	return aiActionPlan{
 		Skills:    append([]aiSkillAction(nil), plan.Skills...),
+		Spells:    append([]aiSkillAction(nil), plan.Spells...),
 		Equipment: append([]aiNamedAction(nil), plan.Equipment...),
 	}
 }
 
 func aiSnapSkillPointsInPlan(plan aiActionPlan) aiActionPlan {
-	if len(plan.Skills) == 0 {
+	if len(plan.Skills) == 0 && len(plan.Spells) == 0 {
 		return plan
 	}
-	plan.Skills = append([]aiSkillAction(nil), plan.Skills...)
-	for i, action := range plan.Skills {
+	plan.Skills = aiSnapSkillActions(plan.Skills)
+	plan.Spells = aiSnapSkillActions(plan.Spells)
+	return plan
+}
+
+func aiSnapSkillActions(actions []aiSkillAction) []aiSkillAction {
+	if len(actions) == 0 {
+		return nil
+	}
+	actions = append([]aiSkillAction(nil), actions...)
+	for i, action := range actions {
 		pointsText := strings.TrimSpace(firstNonEmptyString(action.Points.String(), action.Value.String()))
 		if pointsText == "" {
 			continue
@@ -461,10 +568,10 @@ func aiSnapSkillPointsInPlan(plan aiActionPlan) aiActionPlan {
 		if err != nil {
 			continue
 		}
-		plan.Skills[i].Points = aiFlexibleString(strconv.Itoa(SnapToValidSkillPoints(requestedPoints)))
-		plan.Skills[i].Value = ""
+		actions[i].Points = aiFlexibleString(strconv.Itoa(SnapToValidSkillPoints(requestedPoints)))
+		actions[i].Value = ""
 	}
-	return plan
+	return actions
 }
 
 func SnapToValidSkillPoints(requestedPoints int) int {
@@ -904,7 +1011,129 @@ func (d *aiChatDockable) executeLocalGenerationPipeline(endpoint, model, origina
 		} else {
 			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 3 spent %d CP from the %d CP attribute bucket."), attributeSpend, budget.Attributes))
 		}
-		d.addMessage("AI", i18n.Text("Local generation pipeline paused after Step 3. Later redesigned stages are not implemented yet."))
+	})
+
+	advantageVocabulary := aiFilterThematicVocabularySections(thematicVocabulary, "Advantages", "Perks")
+	beforeAdvantageBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 4 could not start: %v"), err))
+		})
+		return
+	}
+	advantageLabel := i18n.Text("Step 4: Advantages & Perks")
+	advantageSystemPrompt, advantageUserPrompt := aiBuildLocalAdvantagesPrompts(originalPrompt, params, themes, budget.Advantages, attributeApply.Summary, advantageVocabulary)
+	writeSystemPromptDebugFile(advantageSystemPrompt)
+	advantageResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(advantageSystemPrompt, advantageUserPrompt), aiActionPlanJSONSchema())
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", err.Error())
+		})
+		return
+	}
+	advantageResolution, err := d.resolveFilteredAIResponseText(advantageResponse, aiAdvantagesOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", advantageResponse)
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 4 could not be resolved: %v"), err))
+		})
+		return
+	}
+	advantageResolution, err = d.executeLocalCorrectionLoop(endpoint, model, advantageSystemPrompt, advantageLabel, advantageResolution, aiAdvantagesOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", aiLocalPhaseMessage(advantageLabel, advantageResponse))
+			for _, warning := range advantageResolution.Warnings {
+				d.addMessage("AI", warning)
+			}
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 4 could not continue: %v"), err))
+		})
+		return
+	}
+	advantageApply := d.applyLocalGenerationPhase(advantageLabel, advantageResponse, advantageResolution, targetCP)
+	if advantageApply.Err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 4 could not be applied: %v"), advantageApply.Err))
+		})
+		return
+	}
+	afterAdvantageBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 4 budget check could not be calculated: %v"), err))
+		})
+		return
+	}
+	advantageSpend := aiAdvantageSpendFromPointBreakdowns(beforeAdvantageBreakdown, afterAdvantageBreakdown)
+	unison.InvokeTask(func() {
+		if advantageSpend > budget.Advantages {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: Step 4 spent %d CP on advantages and perks, exceeding the %d CP advantages bucket."), advantageSpend, budget.Advantages))
+		} else {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 4 spent %d CP from the %d CP advantages bucket."), advantageSpend, budget.Advantages))
+		}
+	})
+
+	skillsVocabulary := aiFilterThematicVocabularySections(thematicVocabulary, "Skills", "Spells")
+	beforeSkillBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 5 could not start: %v"), err))
+		})
+		return
+	}
+	skillLabel := i18n.Text("Step 5: Skills & Spells")
+	skillSystemPrompt, skillUserPrompt := aiBuildLocalSkillsPrompts(originalPrompt, params, themes, budget, advantageApply.Summary, skillsVocabulary)
+	writeSystemPromptDebugFile(skillSystemPrompt)
+	skillResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(skillSystemPrompt, skillUserPrompt), aiActionPlanJSONSchema())
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", err.Error())
+		})
+		return
+	}
+	skillResolution, err := d.resolveFilteredAIResponseText(skillResponse, aiSkillsAndSpellsOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", skillResponse)
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 5 could not be resolved: %v"), err))
+		})
+		return
+	}
+	skillResolution, err = d.executeLocalCorrectionLoop(endpoint, model, skillSystemPrompt, skillLabel, skillResolution, aiSkillsAndSpellsOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", aiLocalPhaseMessage(skillLabel, skillResponse))
+			for _, warning := range skillResolution.Warnings {
+				d.addMessage("AI", warning)
+			}
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 5 could not continue: %v"), err))
+		})
+		return
+	}
+	skillApply := d.applyLocalGenerationPhase(skillLabel, skillResponse, skillResolution, targetCP)
+	if skillApply.Err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 5 could not be applied: %v"), skillApply.Err))
+		})
+		return
+	}
+	afterSkillBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 5 budget check could not be calculated: %v"), err))
+		})
+		return
+	}
+	skillSpend := aiSkillSpendFromPointBreakdowns(beforeSkillBreakdown, afterSkillBreakdown)
+	spellSpend := aiSpellSpendFromPointBreakdowns(beforeSkillBreakdown, afterSkillBreakdown)
+	totalSkillSpend := skillSpend + spellSpend
+	unison.InvokeTask(func() {
+		if totalSkillSpend > budget.SkillPoints() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: Step 5 spent %d CP from the combined skills bucket, exceeding the %d CP limit (skills: %d CP, spells: %d CP)."), totalSkillSpend, budget.SkillPoints(), skillSpend, spellSpend))
+		} else {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 5 spent %d CP from the %d CP combined skills bucket (skills: %d CP, spells: %d CP)."), totalSkillSpend, budget.SkillPoints(), skillSpend, spellSpend))
+		}
+		d.addMessage("AI", i18n.Text("Local generation pipeline paused after Step 5. Later redesigned stages are not implemented yet."))
 	})
 }
 

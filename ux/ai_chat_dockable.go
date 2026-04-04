@@ -1313,6 +1313,7 @@ type aiActionPlan struct {
 	Disadvantages []aiNamedAction     `json:"disadvantages,omitempty"`
 	Quirks        []aiNamedAction     `json:"quirks,omitempty"`
 	Skills        []aiSkillAction     `json:"skills,omitempty"`
+	Spells        []aiSkillAction     `json:"spells,omitempty"`
 	Equipment     []aiNamedAction     `json:"equipment,omitempty"`
 	SpendAllCP    bool                `json:"spend_all_cp,omitempty"`
 }
@@ -1589,7 +1590,7 @@ func hasAIActionPlanContent(plan aiActionPlan) bool {
 		}
 	}
 	return len(plan.Attributes) != 0 || len(plan.Advantages) != 0 || len(plan.Disadvantages) != 0 ||
-		len(plan.Quirks) != 0 || len(plan.Skills) != 0 || len(plan.Equipment) != 0 || plan.SpendAllCP
+		len(plan.Quirks) != 0 || len(plan.Skills) != 0 || len(plan.Spells) != 0 || len(plan.Equipment) != 0 || plan.SpendAllCP
 }
 
 func mergeAIActionPlan(dst *aiActionPlan, src aiActionPlan) {
@@ -1604,6 +1605,7 @@ func mergeAIActionPlan(dst *aiActionPlan, src aiActionPlan) {
 	dst.Disadvantages = append(dst.Disadvantages, src.Disadvantages...)
 	dst.Quirks = append(dst.Quirks, src.Quirks...)
 	dst.Skills = append(dst.Skills, src.Skills...)
+	dst.Spells = append(dst.Spells, src.Spells...)
 	dst.Equipment = append(dst.Equipment, src.Equipment...)
 	dst.SpendAllCP = dst.SpendAllCP || src.SpendAllCP
 }
@@ -1743,6 +1745,27 @@ func (d *aiChatDockable) applyAIActionPlan(plan aiActionPlan) ([]string, []aiRet
 			}
 		}
 		entity.SetSkillList(skills)
+	}
+
+	if len(plan.Spells) > 0 {
+		spells := entity.Spells
+		for _, action := range plan.Spells {
+			var warning string
+			var retryItem *aiRetryItem
+			var err error
+			spells, warning, retryItem, err = d.addOrUpdateSpell(entity, spells, action)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("Warning: could not apply spell action: %v", err))
+				continue
+			}
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+			if retryItem != nil {
+				retryItems = append(retryItems, *retryItem)
+			}
+		}
+		entity.SetSpellList(spells)
 	}
 
 	if len(plan.Equipment) > 0 {
@@ -1986,6 +2009,31 @@ func (d *aiChatDockable) findLibrarySkillByID(idStr string) (*gurps.Skill, gurps
 	return nil, gurps.LibraryFile{}, nil
 }
 
+func (d *aiChatDockable) findLibrarySpellByID(idStr string) (*gurps.Spell, gurps.LibraryFile, error) {
+	idStr = normalizeAISelectionID(idStr)
+	if idStr == "" {
+		return nil, gurps.LibraryFile{}, nil
+	}
+	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SpellsExt) {
+		for _, ref := range set.List {
+			spells, err := gurps.NewSpellsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, spell := range spells {
+				if spell.Container() {
+					continue
+				}
+				if string(spell.TID) == idStr {
+					spell.SetDataOwner(nil)
+					return spell, libraryFileForSet(set.Name, ref.FilePath), nil
+				}
+			}
+		}
+	}
+	return nil, gurps.LibraryFile{}, nil
+}
+
 func normalizeLookupText(text string) string {
 	text = strings.ToLower(strings.TrimSpace(text))
 	if text == "" {
@@ -2077,6 +2125,26 @@ func applyNameablesToClonedSkill(cloned *gurps.Skill, aiName, aiNotes string) {
 	cloned.Replacements = replacements
 }
 
+func applyNameablesToClonedSpell(cloned *gurps.Spell, aiName, aiNotes string) {
+	keys := make(map[string]string)
+	cloned.FillWithNameableKeys(keys, nil)
+	if len(keys) == 0 {
+		return
+	}
+	value := strings.TrimSpace(aiNotes)
+	if value == "" {
+		value = extractParenthetical(aiName)
+	}
+	if value == "" {
+		return
+	}
+	replacements := make(map[string]string, len(keys))
+	for k := range keys {
+		replacements[k] = value
+	}
+	cloned.Replacements = replacements
+}
+
 func applyAIItemDescriptionToTrait(trait *gurps.Trait, description string) {
 	if trait == nil {
 		return
@@ -2092,6 +2160,15 @@ func applyAIItemDescriptionToSkill(skill *gurps.Skill, description string) {
 	}
 	if description = strings.TrimSpace(description); description != "" {
 		skill.LocalNotes = description
+	}
+}
+
+func applyAIItemDescriptionToSpell(spell *gurps.Spell, description string) {
+	if spell == nil {
+		return
+	}
+	if description = strings.TrimSpace(description); description != "" {
+		spell.LocalNotes = description
 	}
 }
 
@@ -2365,6 +2442,35 @@ func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, gurp
 	return nil, gurps.LibraryFile{}, nil
 }
 
+func (d *aiChatDockable) findLibrarySpellByName(name string) (*gurps.Spell, gurps.LibraryFile, error) {
+	requestedNorm := normalizeLookupText(name)
+	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SpellsExt) {
+		for _, ref := range set.List {
+			spells, err := gurps.NewSpellsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, spell := range spells {
+				if spell.Container() {
+					continue
+				}
+				displayName := strings.TrimSpace(spell.String())
+				if strings.EqualFold(displayName, name) || strings.EqualFold(spell.Name, name) {
+					spell.SetDataOwner(nil)
+					return spell, libraryFileForSet(set.Name, ref.FilePath), nil
+				}
+				if requestedNorm != "" {
+					if normalizeLookupText(displayName) == requestedNorm || normalizeLookupText(spell.Name) == requestedNorm {
+						spell.SetDataOwner(nil)
+						return spell, libraryFileForSet(set.Name, ref.FilePath), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, gurps.LibraryFile{}, nil
+}
+
 func (d *aiChatDockable) skillLookupDebugDetails(name, idStr string) string {
 	requestedNorm := normalizeLookupText(name)
 	if requestedNorm == "" {
@@ -2408,6 +2514,49 @@ func (d *aiChatDockable) skillLookupDebugDetails(name, idStr string) string {
 	return fmt.Sprintf("skill_lookup_debug={id:%q normalized:%q scanned:%d similar:%q}", idStr, requestedNorm, total, strings.Join(similar, ", "))
 }
 
+func (d *aiChatDockable) spellLookupDebugDetails(name, idStr string) string {
+	requestedNorm := normalizeLookupText(name)
+	if requestedNorm == "" {
+		requestedNorm = "(empty)"
+	}
+	similar := make([]string, 0, 5)
+	seen := make(map[string]struct{})
+	total := 0
+	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SpellsExt) {
+		for _, ref := range set.List {
+			spells, err := gurps.NewSpellsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, spell := range spells {
+				if spell.Container() {
+					continue
+				}
+				total++
+				if len(similar) >= 5 {
+					continue
+				}
+				displayName := strings.TrimSpace(spell.String())
+				candNorm := normalizeLookupText(displayName)
+				if candNorm == "" {
+					continue
+				}
+				if strings.Contains(candNorm, requestedNorm) || strings.Contains(requestedNorm, candNorm) {
+					if _, exists := seen[displayName]; exists {
+						continue
+					}
+					seen[displayName] = struct{}{}
+					similar = append(similar, displayName)
+				}
+			}
+		}
+	}
+	if len(similar) == 0 {
+		return fmt.Sprintf("spell_lookup_debug={id:%q normalized:%q scanned:%d similar:none}", idStr, requestedNorm, total)
+	}
+	return fmt.Sprintf("spell_lookup_debug={id:%q normalized:%q scanned:%d similar:%q}", idStr, requestedNorm, total, strings.Join(similar, ", "))
+}
+
 func (d *aiChatDockable) findSimilarLibrarySkillNames(name string) []string {
 	requestedNorm := normalizeLookupText(name)
 	if requestedNorm == "" {
@@ -2429,6 +2578,44 @@ func (d *aiChatDockable) findSimilarLibrarySkillNames(name string) []string {
 					break
 				}
 				displayName := skillDisplayName(skill.Name, skill.Specialization)
+				candNorm := normalizeLookupText(displayName)
+				if candNorm == "" {
+					continue
+				}
+				if strings.Contains(candNorm, requestedNorm) || strings.Contains(requestedNorm, candNorm) {
+					if _, exists := seen[displayName]; exists {
+						continue
+					}
+					seen[displayName] = struct{}{}
+					similar = append(similar, displayName)
+				}
+			}
+		}
+	}
+	return similar
+}
+
+func (d *aiChatDockable) findSimilarLibrarySpellNames(name string) []string {
+	requestedNorm := normalizeLookupText(name)
+	if requestedNorm == "" {
+		return nil
+	}
+	similar := make([]string, 0, 5)
+	seen := make(map[string]struct{})
+	for _, set := range scanNamedFileSetsWithFallback(gurps.GlobalSettings().Libraries(), gurps.SpellsExt) {
+		for _, ref := range set.List {
+			spells, err := gurps.NewSpellsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, spell := range spells {
+				if spell.Container() {
+					continue
+				}
+				if len(similar) >= 5 {
+					break
+				}
+				displayName := strings.TrimSpace(spell.String())
 				candNorm := normalizeLookupText(displayName)
 				if candNorm == "" {
 					continue
@@ -2688,6 +2875,85 @@ func (d *aiChatDockable) addOrUpdateSkill(entity *gurps.Entity, skills []*gurps.
 	return append(skills, cloned), "", nil, nil
 }
 
+func (d *aiChatDockable) addOrUpdateSpell(entity *gurps.Entity, spells []*gurps.Spell, action aiSkillAction) ([]*gurps.Spell, string, *aiRetryItem, error) {
+	name := normalizeAINamedItemName(action.Name.String())
+	idStr := normalizeAISelectionID(action.ID.String())
+	useTIDLookup := idStr != "" && tid.IsValid(tid.TID(idStr))
+	if name == "" && idStr != "" && !useTIDLookup {
+		name = normalizeAINamedItemName(idStr)
+	}
+	if name == "" && !useTIDLookup {
+		return spells, "", nil, fmt.Errorf("spell action is missing a name or valid id")
+	}
+	pointsText := strings.TrimSpace(action.Points.String())
+	if pointsText == "" {
+		pointsText = strings.TrimSpace(action.Value.String())
+	}
+	warningPrefix := ""
+	if idStr != "" && !useTIDLookup {
+		warningPrefix = fmt.Sprintf("Warning: spell %q provided invalid id %q; falling back to name lookup. ", name, idStr)
+	}
+	if name != "" {
+		if existing := findExistingSpellInList(spells, name); existing != nil {
+			if pointsText != "" {
+				if points, err := fxp.FromString(pointsText); err == nil {
+					existing.SetRawPoints(points)
+				}
+			}
+			applyAIItemDescriptionToSpell(existing, action.Description.String())
+			return spells, "", nil, nil
+		}
+	}
+	if useTIDLookup {
+		if existing := findExistingSpellByIDInList(spells, idStr, name); existing != nil {
+			if pointsText != "" {
+				if points, err := fxp.FromString(pointsText); err == nil {
+					existing.SetRawPoints(points)
+				}
+			}
+			applyAIItemDescriptionToSpell(existing, action.Description.String())
+			return spells, "", nil, nil
+		}
+	}
+	var librarySpell *gurps.Spell
+	var libFile gurps.LibraryFile
+	var err error
+
+	if useTIDLookup {
+		librarySpell, libFile, err = d.findLibrarySpellByID(idStr)
+		if err != nil {
+			return spells, "", nil, err
+		}
+	}
+	if librarySpell == nil && name != "" {
+		librarySpell, libFile, err = d.findLibrarySpellByName(name)
+		if err != nil {
+			return spells, "", nil, err
+		}
+	}
+	if librarySpell == nil && idStr != "" && !strings.EqualFold(idStr, name) && !useTIDLookup {
+		librarySpell, libFile, err = d.findLibrarySpellByName(idStr)
+		if err != nil {
+			return spells, "", nil, err
+		}
+	}
+	if librarySpell == nil {
+		similar := d.findSimilarLibrarySpellNames(name)
+		retryItem := &aiRetryItem{Category: "spell", Name: name, Similar: similar}
+		details := d.spellLookupDebugDetails(name, idStr)
+		return spells, fmt.Sprintf("%sWarning: spell %q was not found in the library and was skipped. Spells must be chosen from available database entries. %s", warningPrefix, name, details), retryItem, nil
+	}
+	cloned := librarySpell.Clone(libFile, entity, nil, false)
+	applyNameablesToClonedSpell(cloned, name, action.Notes.String())
+	applyAIItemDescriptionToSpell(cloned, action.Description.String())
+	if pointsText != "" {
+		if points, err := fxp.FromString(pointsText); err == nil {
+			cloned.SetRawPoints(points)
+		}
+	}
+	return append(spells, cloned), "", nil, nil
+}
+
 func (d *aiChatDockable) addOrUpdateEquipment(entity *gurps.Entity, equipment []*gurps.Equipment, action aiNamedAction) ([]*gurps.Equipment, string, error) {
 	name := strings.TrimSpace(action.Name.String())
 	idStr := normalizeAISelectionID(action.ID.String())
@@ -2844,6 +3110,61 @@ func findExistingSkillByIDInList(skills []*gurps.Skill, idStr, name string) *gur
 			continue
 		}
 		return skill
+	}
+	return nil
+}
+
+func (d *aiChatDockable) findExistingSpell(entity *gurps.Entity, name string) *gurps.Spell {
+	if entity == nil {
+		return nil
+	}
+	return findExistingSpellInList(entity.Spells, name)
+}
+
+func findExistingSpellInList(spells []*gurps.Spell, name string) *gurps.Spell {
+	name = strings.TrimSpace(name)
+	requestedNorm := normalizeLookupText(name)
+	for _, spell := range spells {
+		if spell.Container() {
+			continue
+		}
+		resolvedName := aiResolvedSpellName(spell)
+		if strings.EqualFold(spell.Name, name) || strings.EqualFold(resolvedName, name) {
+			return spell
+		}
+		if requestedNorm != "" && normalizeLookupText(resolvedName) == requestedNorm {
+			return spell
+		}
+	}
+	return nil
+}
+
+func (d *aiChatDockable) findExistingSpellByID(entity *gurps.Entity, idStr, name string) *gurps.Spell {
+	if entity == nil {
+		return nil
+	}
+	return findExistingSpellByIDInList(entity.Spells, idStr, name)
+}
+
+func findExistingSpellByIDInList(spells []*gurps.Spell, idStr, name string) *gurps.Spell {
+	idStr = normalizeAISelectionID(idStr)
+	requestedNorm := normalizeLookupText(name)
+	if idStr == "" {
+		return nil
+	}
+	for _, spell := range spells {
+		if spell.Container() {
+			continue
+		}
+		sourceID := normalizeAISelectionID(string(spell.Source.TID))
+		localID := normalizeAISelectionID(string(spell.TID))
+		if sourceID != idStr && localID != idStr {
+			continue
+		}
+		if requestedNorm != "" && normalizeLookupText(aiResolvedSpellName(spell)) != requestedNorm {
+			continue
+		}
+		return spell
 	}
 	return nil
 }
@@ -3221,6 +3542,9 @@ func aiAppliedPlanHistorySummary(plan aiActionPlan) string {
 	}
 	if len(plan.Skills) > 0 {
 		updated = append(updated, fmt.Sprintf("%d skills", len(plan.Skills)))
+	}
+	if len(plan.Spells) > 0 {
+		updated = append(updated, fmt.Sprintf("%d spells", len(plan.Spells)))
 	}
 	if len(plan.Equipment) > 0 {
 		updated = append(updated, fmt.Sprintf("%d equipment items", len(plan.Equipment)))

@@ -24,11 +24,13 @@ const (
 	aiLibraryCategoryAdvantage    aiLibraryCategory = "advantages"
 	aiLibraryCategoryDisadvantage aiLibraryCategory = "disadvantages"
 	aiLibraryCategoryQuirk        aiLibraryCategory = "quirks"
+	aiLibraryCategorySpell        aiLibraryCategory = "spells"
 	aiLibraryCategoryEquipment    aiLibraryCategory = "equipment"
 )
 
 var aiLibraryCategories = []aiLibraryCategory{
 	aiLibraryCategorySkill,
+	aiLibraryCategorySpell,
 	aiLibraryCategoryAdvantage,
 	aiLibraryCategoryDisadvantage,
 	aiLibraryCategoryQuirk,
@@ -57,6 +59,8 @@ func (c aiLibraryCategory) String() string {
 	switch c {
 	case aiLibraryCategorySkill:
 		return "Skills"
+	case aiLibraryCategorySpell:
+		return "Spells"
 	case aiLibraryCategoryAdvantage:
 		return "Advantages"
 	case aiLibraryCategoryDisadvantage:
@@ -68,6 +72,13 @@ func (c aiLibraryCategory) String() string {
 	default:
 		return string(c)
 	}
+}
+
+func aiResolvedSpellName(spell *gurps.Spell) string {
+	if spell == nil {
+		return ""
+	}
+	return strings.TrimSpace(spell.String())
 }
 
 type aiResolverDebugCounterState struct {
@@ -198,6 +209,8 @@ func aiCategoryJSONField(category string) string {
 		return string(aiLibraryCategoryAdvantage)
 	case "disadvantage", string(aiLibraryCategoryDisadvantage):
 		return string(aiLibraryCategoryDisadvantage)
+	case "spell", string(aiLibraryCategorySpell):
+		return string(aiLibraryCategorySpell)
 	case "quirk", string(aiLibraryCategoryQuirk):
 		return string(aiLibraryCategoryQuirk)
 	case "equipment":
@@ -215,6 +228,8 @@ func aiCategorySingular(category string) string {
 		return "advantage"
 	case string(aiLibraryCategoryDisadvantage):
 		return "disadvantage"
+	case string(aiLibraryCategorySpell):
+		return "spell"
 	case string(aiLibraryCategoryQuirk):
 		return "quirk"
 	case string(aiLibraryCategoryEquipment):
@@ -816,6 +831,7 @@ func GetThematicVocabulary(concept string, themes []string) string {
 	query := aiBuildThematicVocabularyQuery(concept, themes)
 	results := catalog.searchConceptEntries(query, map[aiLibraryCategory]int{
 		aiLibraryCategorySkill:        12,
+		aiLibraryCategorySpell:        10,
 		aiLibraryCategoryAdvantage:    14,
 		aiLibraryCategoryDisadvantage: 10,
 		aiLibraryCategoryQuirk:        6,
@@ -826,6 +842,7 @@ func GetThematicVocabulary(concept string, themes []string) string {
 		names []string
 	}{
 		{label: "Skills", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategorySkill])},
+		{label: "Spells", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategorySpell])},
 		{label: "Advantages", names: aiDistinctCatalogDisplayNames(advantages)},
 		{label: "Perks", names: aiDistinctCatalogDisplayNames(perks)},
 		{label: "Disadvantages", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategoryDisadvantage])},
@@ -854,6 +871,7 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 		signature: signature,
 		byCategory: map[aiLibraryCategory][]*aiLibraryCatalogEntry{
 			aiLibraryCategorySkill:        nil,
+			aiLibraryCategorySpell:        nil,
 			aiLibraryCategoryAdvantage:    nil,
 			aiLibraryCategoryDisadvantage: nil,
 			aiLibraryCategoryQuirk:        nil,
@@ -861,6 +879,7 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 		},
 		byID: map[aiLibraryCategory]map[string]*aiLibraryCatalogEntry{
 			aiLibraryCategorySkill:        make(map[string]*aiLibraryCatalogEntry),
+			aiLibraryCategorySpell:        make(map[string]*aiLibraryCatalogEntry),
 			aiLibraryCategoryAdvantage:    make(map[string]*aiLibraryCatalogEntry),
 			aiLibraryCategoryDisadvantage: make(map[string]*aiLibraryCatalogEntry),
 			aiLibraryCategoryQuirk:        make(map[string]*aiLibraryCatalogEntry),
@@ -887,6 +906,34 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 					DisplayName:    aiCatalogEntryDisplayName(skill.Name, skill.Specialization),
 					BaseName:       aiLookupBaseName(skill.Name),
 					Specialization: strings.TrimSpace(skill.Specialization),
+					PointCost:      0,
+					SourcePath:     ref.FilePath,
+					LibraryFile:    libraryFileForSet(set.Name, ref.FilePath),
+					Nameables:      aiSortedNameableKeys(keys),
+				})
+			}
+		}
+	}
+
+	for _, set := range scanNamedFileSetsWithFallback(libraries, gurps.SpellsExt) {
+		for _, ref := range set.List {
+			rows, err := gurps.NewSpellsFromFile(ref.FileSystem, ref.FilePath)
+			if err != nil {
+				continue
+			}
+			for _, spell := range rows {
+				if spell == nil || spell.Container() || strings.TrimSpace(spell.Name) == "" {
+					continue
+				}
+				keys := make(map[string]string)
+				spell.FillWithNameableKeys(keys, nil)
+				catalog.addEntry(&aiLibraryCatalogEntry{
+					Category:       aiLibraryCategorySpell,
+					ID:             string(spell.TID),
+					Name:           strings.TrimSpace(spell.Name),
+					DisplayName:    strings.TrimSpace(spell.String()),
+					BaseName:       aiLookupBaseName(strings.TrimSpace(spell.Name)),
+					Specialization: "",
 					PointCost:      0,
 					SourcePath:     ref.FilePath,
 					LibraryFile:    libraryFileForSet(set.Name, ref.FilePath),
@@ -1062,6 +1109,18 @@ func (c *aiLibraryCatalog) resolveAIActionPlan(plan aiActionPlan) (aiActionPlan,
 			warnings = append(warnings, warning)
 		}
 	}
+	for _, action := range plan.Spells {
+		resolvedAction, retryItem, warning := c.resolveSpellAction(action)
+		if resolvedAction != nil {
+			resolved.Spells = append(resolved.Spells, *resolvedAction)
+		}
+		if retryItem != nil {
+			retryItems = append(retryItems, *retryItem)
+		}
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
 	for _, action := range plan.Equipment {
 		resolvedAction, retryItem, warning := c.resolveNamedAction(aiLibraryCategoryEquipment, action)
 		if resolvedAction != nil {
@@ -1226,6 +1285,64 @@ func (c *aiLibraryCatalog) resolveSkillAction(action aiSkillAction) (*aiSkillAct
 	aiLogUnresolvedIntent(aiLibraryCategorySkill, originalName, name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
 	retry := aiBuildRetryItem(string(aiLibraryCategorySkill), name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
 	warning := fmt.Sprintf("Warning: skill %q could not be resolved to an exact library entry and is waiting for correction.", name)
+	return nil, retry, warning
+}
+
+func (c *aiLibraryCatalog) resolveSpellAction(action aiSkillAction) (*aiSkillAction, *aiRetryItem, string) {
+	rawName := action.Name.String()
+	idStr := normalizeAISelectionID(action.ID.String())
+	useTIDLookup := idStr != "" && tid.IsValid(tid.TID(idStr))
+	name := normalizeAINamedItemName(rawName)
+	if name == "" && idStr != "" && !useTIDLookup {
+		name = normalizeAINamedItemName(idStr)
+	}
+	originalName := name
+	if name != "" {
+		name = aiResolveAlias(aiLibraryCategorySpell, name)
+	}
+	if useTIDLookup {
+		if entry := c.byID[aiLibraryCategorySpell][idStr]; entry != nil {
+			resolved := action
+			resolved.ID = aiFlexibleString(entry.ID)
+			resolved.Notes = aiFlexibleString(aiResolvedNotes(action.Notes.String(), rawName, entry))
+			resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
+			return &resolved, nil, ""
+		}
+	}
+	if name == "" {
+		return nil, nil, "Warning: spell action is missing a usable name and was skipped."
+	}
+
+	if entry := c.exactMatch(aiLibraryCategorySpell, name); entry != nil {
+		resolved := action
+		resolved.ID = aiFlexibleString(entry.ID)
+		resolved.Notes = aiFlexibleString(aiResolvedNotes(action.Notes.String(), rawName, entry))
+		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
+		return &resolved, nil, ""
+	}
+
+	if entry, derivedNotes := c.templateNameableMatch(aiLibraryCategorySpell, rawName); entry != nil {
+		resolved := action
+		resolved.ID = aiFlexibleString(entry.ID)
+		if strings.TrimSpace(resolved.Notes.String()) == "" {
+			resolved.Notes = aiFlexibleString(derivedNotes)
+		}
+		resolved.Notes = aiFlexibleString(aiResolvedNotes(resolved.Notes.String(), rawName, entry))
+		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
+		return &resolved, nil, ""
+	}
+
+	ranked := c.rankCandidates(aiLibraryCategorySpell, name)
+	if entry := aiAutoselectCandidate(aiLibraryCategorySpell, name, ranked); entry != nil {
+		resolved := action
+		resolved.ID = aiFlexibleString(entry.ID)
+		resolved.Notes = aiFlexibleString(aiResolvedNotes(action.Notes.String(), rawName, entry))
+		resolved.Name = aiFlexibleString(aiDisplayNameWithNotes(entry, resolved.Notes.String()))
+		return &resolved, nil, ""
+	}
+	aiLogUnresolvedIntent(aiLibraryCategorySpell, originalName, name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
+	retry := aiBuildRetryItem(string(aiLibraryCategorySpell), name, action.Notes.String(), action.Description.String(), firstNonEmptyString(action.Points.String(), action.Value.String()), 0, ranked)
+	warning := fmt.Sprintf("Warning: spell %q could not be resolved to an exact library entry and is waiting for correction.", name)
 	return nil, retry, warning
 }
 
@@ -1649,6 +1766,7 @@ func aiActionPlanJSONSchema() map[string]any {
 			"disadvantages": map[string]any{"type": "array", "items": namedAction},
 			"quirks":        map[string]any{"type": "array", "items": namedAction},
 			"skills":        map[string]any{"type": "array", "items": skillAction},
+			"spells":        map[string]any{"type": "array", "items": skillAction},
 			"equipment":     map[string]any{"type": "array", "items": namedAction},
 			"spend_all_cp":  map[string]any{"type": "boolean"},
 		},

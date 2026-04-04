@@ -54,6 +54,7 @@ func TestAIActionPlanWithoutRetryItemsRemovesMatchingActions(t *testing.T) {
 			{Name: aiFlexibleString("Area Knowledge (Mesa)"), Notes: aiFlexibleString("Mesa"), Value: aiFlexibleString("12")},
 			{Name: aiFlexibleString("Stealth"), Points: aiFlexibleString("2")},
 		},
+		Spells: []aiSkillAction{{Name: aiFlexibleString("Fireball"), Points: aiFlexibleString("4")}},
 		Equipment: []aiNamedAction{
 			{Name: aiFlexibleString("Rope"), Description: aiFlexibleString("climbing rope"), Quantity: aiFlexibleInt(2)},
 			{Name: aiFlexibleString("Rope"), Description: aiFlexibleString("camp rope"), Quantity: aiFlexibleInt(2)},
@@ -64,6 +65,7 @@ func TestAIActionPlanWithoutRetryItemsRemovesMatchingActions(t *testing.T) {
 	filtered := aiActionPlanWithoutRetryItems(plan, []aiRetryItem{
 		{Category: string(aiLibraryCategoryAdvantage), Name: "Combat Reflexes", Points: "15"},
 		{Category: string(aiLibraryCategorySkill), Name: "Area Knowledge (Mesa)", Notes: "Mesa", Points: "12"},
+		{Category: string(aiLibraryCategorySpell), Name: "Fireball", Points: "4"},
 		{Category: string(aiLibraryCategoryEquipment), Name: "Rope", Description: "climbing rope", Quantity: 2},
 	})
 
@@ -75,6 +77,9 @@ func TestAIActionPlanWithoutRetryItemsRemovesMatchingActions(t *testing.T) {
 	}
 	if len(filtered.Skills) != 1 || filtered.Skills[0].Name.String() != "Stealth" {
 		t.Fatalf("expected only Stealth to remain in skills, got %#v", filtered.Skills)
+	}
+	if len(filtered.Spells) != 0 {
+		t.Fatalf("expected matching spell retry item to remove spells, got %#v", filtered.Spells)
 	}
 	if len(filtered.Equipment) != 2 {
 		t.Fatalf("expected Lantern and one Rope to remain in equipment, got %#v", filtered.Equipment)

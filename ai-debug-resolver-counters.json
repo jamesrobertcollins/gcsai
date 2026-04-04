@@ -14,6 +14,18 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fpoints=\"5\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 3,
+      "last_seen": "2026-04-04T22:37:40.160063Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "points=\"5\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=disadvantages\u001finput=\"Clerical Investment\"\u001fpoints=\"-10\"\u001fquantity=1\u001fcandidates=[to-5RJL0cfauvVaSO:External Development, tBbCyCeHBLNJHn65H:Code of Honor (Private Investigator), t72KUTNvqePTkWudf:Crippling Shyness, t32CQJ7saX6cgIJuS:Perk (Species Scent), tIir5i3ZjJJyWwpxI:G-Intolerance (0.1G increment)]",
       "kind": "unresolved",
       "count": 2,
@@ -77,6 +89,20 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Accessory\"\u001fnotes=\"Telepathic Bond with Groucho\"\u001fdescription=\"The hammer Groucho can talk to the wielder, but only the person holding it can hear Groucho. Groucho is enchanted with a soul, but no one knows if it's good, bad, human, deadite, or demon.\"\u001fpoints=\"1\"\u001fcandidates=[tyutbe-sSaUo0JHoI:Accessory, tNeakSSbeLd8qrQiQ:Accessory, tA3gra3SqvrDFnVQE:Accessory (Fan), tpkll2MtxJ7dH4D8Y:Accessory (Lock), te86kBEVtlf4RiL2O:Accessory (Floodlights)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:24:16.6489506Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Accessory\"",
+        "notes=\"Telepathic Bond with Groucho\"",
+        "description=\"The hammer Groucho can talk to the wielder, but only the person holding it can hear Groucho. Groucho is enchanted with a soul, but no one knows if it's good, bad, human, deadite, or demon.\"",
+        "points=\"1\"",
+        "candidates=[tyutbe-sSaUo0JHoI:Accessory, tNeakSSbeLd8qrQiQ:Accessory, tA3gra3SqvrDFnVQE:Accessory (Fan), tpkll2MtxJ7dH4D8Y:Accessory (Lock), te86kBEVtlf4RiL2O:Accessory (Floodlights)]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=advantages\u001finput=\"Crushing Attack\"\u001fnotes=\"Groucho (Extra Damage vs Deadites)\"\u001fdescription=\"Groucho's soul burns with a specific hatred or resonance against deadites, dealing extra crushing damage and knockback exclusively to them.\"\u001fcandidates=[td6a7vtvZ3aNZCxNp:Springing Attack, ty02wIs3SOt8DoIC7:Crushing Striker, tIixiOHEen0Uqu4Xo:Constriction Attack, tbX-Wi-toob7qt6zA:Crushing Strikers (Wings), tHNB-mN-O6Jhu2fpF:Extra Attack]",
       "kind": "unresolved",
       "count": 1,
@@ -100,6 +126,32 @@
         "notes=\"Groucho (Magic Hammer)\"",
         "description=\"Groucho is a magic hammer with a soul inside (origins unknown—human, demon, or deadite). It strikes with immense force, sending enemies flying.\"",
         "candidates=[td6a7vtvZ3aNZCxNp:Springing Attack, ty02wIs3SOt8DoIC7:Crushing Striker, tIixiOHEen0Uqu4Xo:Constriction Attack, tbX-Wi-toob7qt6zA:Crushing Strikers (Wings), tHNB-mN-O6Jhu2fpF:Extra Attack]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Enhanced Knockback\"\u001fnotes=\"Groucho (Hammer)\"\u001fpoints=\"5\"\u001fcandidates=[tkx3JvHbAz6vK3NoL:Enhanced Block (Cloak), t2YeWtLsS-544fGdt:Enhanced Block, tOl20TXr9KKkV5FRy:Enhanced Tracking, tL2a1vcgOmW59uPKH:Enhanced Block (Shield), topQPYMNAoZQ2QEow:Cinematic Knockback]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:37:18.0017178Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Enhanced Knockback\"",
+        "notes=\"Groucho (Hammer)\"",
+        "points=\"5\"",
+        "candidates=[tkx3JvHbAz6vK3NoL:Enhanced Block (Cloak), t2YeWtLsS-544fGdt:Enhanced Block, tOl20TXr9KKkV5FRy:Enhanced Tracking, tL2a1vcgOmW59uPKH:Enhanced Block (Shield), topQPYMNAoZQ2QEow:Cinematic Knockback]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Innate Attack\"\u001fnotes=\"Groucho (Hammer) +1d crushing damage vs. Deadites, +2d crushing damage vs. Demons\"\u001fpoints=\"10\"\u001fcandidates=[tVAS4yCBzhDTkfg2T:Innate Attack (Cut), tuvstBu3EtRU0qAa9:Innate Attack (Burn), tPn0MAB9RgKaGCCBe:Innate Attack (Crush), ttP5n0OVmbu8o50uI:Innate Attack (Toxic), t1Z9nSurFSpFVBLI4:Innate Attack (Fatigue)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:37:17.9867167Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Innate Attack\"",
+        "notes=\"Groucho (Hammer) +1d crushing damage vs. Deadites, +2d crushing damage vs. Demons\"",
+        "points=\"10\"",
+        "candidates=[tVAS4yCBzhDTkfg2T:Innate Attack (Cut), tuvstBu3EtRU0qAa9:Innate Attack (Burn), tPn0MAB9RgKaGCCBe:Innate Attack (Crush), ttP5n0OVmbu8o50uI:Innate Attack (Toxic), t1Z9nSurFSpFVBLI4:Innate Attack (Fatigue)]"
       ]
     },
     {
@@ -158,6 +210,20 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Armored '67 Chevy Impala\"\u001fdescription=\"A heavily modified classic car with armor plating, especially around the engine bay.\"\u001fpoints=\"2\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:24:16.6107166Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"Armored '67 Chevy Impala\"",
+        "description=\"A heavily modified classic car with armor plating, especially around the engine bay.\"",
+        "points=\"2\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Armored '67 Chevy Impala\"\u001fdescription=\"Armor plating especially around the engine bay.\"\u001fpoints=\"3\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
       "kind": "unresolved",
       "count": 1,
@@ -172,6 +238,19 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Groucho the Hammer\"\u001fpoints=\"1\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:24:16.6213615Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"Groucho the Hammer\"",
+        "points=\"1\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Groucho the Magic Hammer\"\u001fpoints=\"1\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
       "kind": "unresolved",
       "count": 1,
@@ -182,6 +261,31 @@
         "notes=\"Groucho the Magic Hammer\"",
         "points=\"1\"",
         "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=disadvantages\u001finput=\"Code of Honor\"\u001fnotes=\"Soldier's\"\u001fpoints=\"-10\"\u001fcandidates=[tpkeDtZbibn03bQdv:Code of Honor (Vor), tCU5BsZxzEnnFu3DA:Code of Honor (Xia), tPuY5i56VFY3WSAGa:Code of Honor (Arab), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:24:16.6544477Z",
+      "fields": [
+        "category=disadvantages",
+        "input=\"Code of Honor\"",
+        "notes=\"Soldier's\"",
+        "points=\"-10\"",
+        "candidates=[tpkeDtZbibn03bQdv:Code of Honor (Vor), tCU5BsZxzEnnFu3DA:Code of Honor (Xia), tPuY5i56VFY3WSAGa:Code of Honor (Arab), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=disadvantages\u001finput=\"Code of Honor\"\u001fpoints=\"-10\"\u001fcandidates=[tpkeDtZbibn03bQdv:Code of Honor (Vor), tCU5BsZxzEnnFu3DA:Code of Honor (Xia), tPuY5i56VFY3WSAGa:Code of Honor (Arab), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:37:18.0097444Z",
+      "fields": [
+        "category=disadvantages",
+        "input=\"Code of Honor\"",
+        "points=\"-10\"",
+        "candidates=[tpkeDtZbibn03bQdv:Code of Honor (Vor), tCU5BsZxzEnnFu3DA:Code of Honor (Xia), tPuY5i56VFY3WSAGa:Code of Honor (Arab), tAOleU4El-Zl3Tra7:Code of Honor (Elven), tUVPIfCYkKywqQ8y1:Code of Honor (Police)]"
       ]
     },
     {
@@ -254,6 +358,19 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Magical Familiarity\"\u001fnotes=\"Groucho can communicate with Thomas only when he is holding the hammer\"\u001fpoints=\"-2\"\u001fcandidates=[tfKLR9HOOsGwXz3_C:Mild Toxicity, t5HIBFzY3oKplTmNk:Residual Personality, tNB5IUEqo6aD9i0d5:Dual Identity, tP3Rnb6exYCsfJx1l:Gallant, tKnTO9tRIpKGTxa_9:Glimpses of Clarity]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:37:18.016496Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Magical Familiarity\"",
+        "notes=\"Groucho can communicate with Thomas only when he is holding the hammer\"",
+        "points=\"-2\"",
+        "candidates=[tfKLR9HOOsGwXz3_C:Mild Toxicity, t5HIBFzY3oKplTmNk:Residual Personality, tNB5IUEqo6aD9i0d5:Dual Identity, tP3Rnb6exYCsfJx1l:Gallant, tKnTO9tRIpKGTxa_9:Glimpses of Clarity]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=quirks\u001finput=\"Overly protective of his '67 Chevy Impala\"\u001fpoints=\"-1\"\u001fcandidates=[tSqGPxxJko47Sttoc:Overcautious Habit, tuWexgW757jM4_zMQ:Overspecialization, tuv_jLO9haDIXQ3i3:Tests Positive for @Condition@, tF_jzafw5o8ISW9DR:Perfectionist, th6ndN_gjCU9ItioE:Positive Secret]",
       "kind": "unresolved",
       "count": 1,
@@ -310,6 +427,18 @@
         "notes=\"Ammo\"",
         "points=\"1\"",
         "candidates=[sY9q_60yrVFk1zB9C:Fast-Draw, s5xh6bANmCGbYersa:Fast-Draw, s0itc_sZNPlEbfRf6:Fast-Draw, sCG_CPJOhGXTZ7IjX:Fast-Draw (Ammo), snrypTCt6M0Gr1jm7:Fast-Draw (Arrow)]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=skills\u001finput=\"Martial Arts (Hand-to-Hand)\"\u001fpoints=\"10\"\u001fcandidates=[qYiKkI3bnp-LQo0jE:Targeted Attack (@Specialty@/Hand), qhQBLkH9f_VqPTjyI:Targeted Attack (Hand), sIvsjfWsAzjUfQTxA:Artillery (Cannon), s5-0fzlVirsDluibQ:Animal Handling, qG7KjbeOqW0JoC2bw:Arm or Hand Lock]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:37:18.032546Z",
+      "fields": [
+        "category=skills",
+        "input=\"Martial Arts (Hand-to-Hand)\"",
+        "points=\"10\"",
+        "candidates=[qYiKkI3bnp-LQo0jE:Targeted Attack (@Specialty@/Hand), qhQBLkH9f_VqPTjyI:Targeted Attack (Hand), sIvsjfWsAzjUfQTxA:Artillery (Cannon), s5-0fzlVirsDluibQ:Animal Handling, qG7KjbeOqW0JoC2bw:Arm or Hand Lock]"
       ]
     }
   ]
