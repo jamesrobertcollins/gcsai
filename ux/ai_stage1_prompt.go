@@ -19,14 +19,41 @@ type aiCharacterRequestParams struct {
 	DisadvantageLimit int
 }
 
+const (
+	aiBuildSessionStateGathering       = "Gathering"
+	aiBuildSessionStatePendingApproval = "PendingApproval"
+	aiBuildSessionStateGenerating      = "Generating"
+)
+
+type aiDraftProfile struct {
+	CharacterConcept aiFlexibleString `json:"character_concept,omitempty"`
+	Name             aiFlexibleString `json:"name,omitempty"`
+	Title            aiFlexibleString `json:"title,omitempty"`
+	Age              aiFlexibleString `json:"age,omitempty"`
+	Weight           aiFlexibleString `json:"weight,omitempty"`
+	Height           aiFlexibleString `json:"height,omitempty"`
+	EyeColor         aiFlexibleString `json:"eye_color,omitempty"`
+	HairColor        aiFlexibleString `json:"hair_color,omitempty"`
+	Size             aiFlexibleString `json:"size,omitempty"`
+	Religion         aiFlexibleString `json:"religion,omitempty"`
+	TechLevel        aiFlexibleString `json:"tech_level,omitempty"`
+	CPLimit          aiFlexibleString `json:"cp_limit,omitempty"`
+	StartingWealth   aiFlexibleString `json:"starting_wealth,omitempty"`
+	GameLimitations  aiFlexibleString `json:"game_limitations,omitempty"`
+	WorldSetting     aiFlexibleString `json:"world_setting,omitempty"`
+}
+
 type aiStage1SystemPromptData struct {
 	aiCharacterRequestParams
 	Summary string
 }
 
 type aiBuildSessionContext struct {
+	State           string
 	OriginalRequest string
 	Params          aiCharacterRequestParams
+	DraftProfile    aiDraftProfile
+	GatheringLog    []aiLocalChatMessage
 }
 
 type aiPreparedChatRequest struct {
@@ -129,6 +156,8 @@ When responding outside JSON, keep the answer concise, factual, and directly tie
 	aiBuildContinuationVerbPattern      = regexp.MustCompile(`(?i)\b(?:add|give|include|pick|choose|apply|continue|finish|complete|expand|fill(?:\s+out)?|spend|use)\b`)
 	aiBuildContinuationCategoryPattern  = regexp.MustCompile(`(?i)\b(?:advantages?|disadvantages?|quirks?|skills?|attributes?|equipment|gear|traits?|profile)\b`)
 	aiBuildContinuationRemainingPattern = regexp.MustCompile(`(?i)\b(?:remaining|rest|left|leftover|unspent)\b`)
+	aiLoosePositiveIntPattern           = regexp.MustCompile(`\d+`)
+	aiExplicitApprovalPattern           = regexp.MustCompile(`(?i)\bapprove(?:d)?\b`)
 )
 
 func aiRenderStage1SystemPrompt(data aiStage1SystemPromptData) string {
@@ -347,19 +376,186 @@ func aiShouldUseBuildContinuationPrompt(request string) bool {
 	return aiBuildContinuationCategoryPattern.MatchString(request) && len(strings.Fields(request)) <= 6
 }
 
+func aiLocalBaselineGatheringSystemPrompt(draft aiDraftProfile) string {
+	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS 4e Game Master. Your goal is to collect character profile data from the user. You need: Character Concept (e.g., Marine Mechanic, Noir Detective), Name, Title, Age, Weight, Height, Eye/Hair Color, Religion, TL, CP limit, Starting Wealth, and Game setting. Ask the user for missing details, or ask if they want them randomized/left blank. If Starting Wealth is unknown, default to the standard GURPS wealth for the agreed TL. Do NOT generate the character sheet yet.
+If the user wants a field randomized or left blank, record that choice literally in draft_profile.
+Once you have the required info, output exactly one top-level JSON object in this form and nothing else:
+{"status":"complete","draft_profile":{...}}
+
+Current draft profile:
+%s`, aiFormatDraftProfileForPrompt(draft, true)))
+}
+
+func aiDraftProfileFromParams(params aiCharacterRequestParams) aiDraftProfile {
+	profile := aiDraftProfile{
+		CharacterConcept: aiFlexibleString(strings.TrimSpace(params.Concept)),
+		TechLevel:        aiFlexibleString(strings.TrimSpace(params.TechLevel)),
+	}
+	if params.TotalCP > 0 {
+		profile.CPLimit = aiFlexibleString(strconv.Itoa(params.TotalCP))
+	}
+	return aiNormalizeDraftProfile(profile)
+}
+
+func aiNormalizeDraftProfile(profile aiDraftProfile) aiDraftProfile {
+	trim := func(value aiFlexibleString) aiFlexibleString {
+		return aiFlexibleString(strings.TrimSpace(value.String()))
+	}
+	profile.CharacterConcept = trim(profile.CharacterConcept)
+	profile.Name = trim(profile.Name)
+	profile.Title = trim(profile.Title)
+	profile.Age = trim(profile.Age)
+	profile.Weight = trim(profile.Weight)
+	profile.Height = trim(profile.Height)
+	profile.EyeColor = trim(profile.EyeColor)
+	profile.HairColor = trim(profile.HairColor)
+	profile.Size = trim(profile.Size)
+	profile.Religion = trim(profile.Religion)
+	profile.TechLevel = aiFlexibleString(normalizeAIRequestTechLevel(profile.TechLevel.String()))
+	profile.CPLimit = trim(profile.CPLimit)
+	profile.StartingWealth = trim(profile.StartingWealth)
+	profile.GameLimitations = trim(profile.GameLimitations)
+	profile.WorldSetting = trim(profile.WorldSetting)
+	return profile
+}
+
+func aiMergeDraftProfile(base, update aiDraftProfile) aiDraftProfile {
+	merged := aiNormalizeDraftProfile(base)
+	update = aiNormalizeDraftProfile(update)
+	merge := func(dst *aiFlexibleString, src aiFlexibleString) {
+		if strings.TrimSpace(src.String()) != "" {
+			*dst = src
+		}
+	}
+	merge(&merged.CharacterConcept, update.CharacterConcept)
+	merge(&merged.Name, update.Name)
+	merge(&merged.Title, update.Title)
+	merge(&merged.Age, update.Age)
+	merge(&merged.Weight, update.Weight)
+	merge(&merged.Height, update.Height)
+	merge(&merged.EyeColor, update.EyeColor)
+	merge(&merged.HairColor, update.HairColor)
+	merge(&merged.Size, update.Size)
+	merge(&merged.Religion, update.Religion)
+	merge(&merged.TechLevel, update.TechLevel)
+	merge(&merged.CPLimit, update.CPLimit)
+	merge(&merged.StartingWealth, update.StartingWealth)
+	merge(&merged.GameLimitations, update.GameLimitations)
+	merge(&merged.WorldSetting, update.WorldSetting)
+	return aiNormalizeDraftProfile(merged)
+}
+
+func aiParseLoosePositiveInt(text string) int {
+	match := aiLoosePositiveIntPattern.FindString(strings.TrimSpace(text))
+	if match == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(match)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+func aiDraftProfileToCharacterRequestParams(draft aiDraftProfile, defaults aiCharacterRequestParams) aiCharacterRequestParams {
+	params := defaults
+	defaultLimitWasDerived := params.DisadvantageLimit == aiDefaultDisadvantageLimit(params.TotalCP)
+	draft = aiNormalizeDraftProfile(draft)
+	if concept := strings.TrimSpace(draft.CharacterConcept.String()); concept != "" {
+		params.Concept = concept
+	}
+	if totalCP := aiParseLoosePositiveInt(draft.CPLimit.String()); totalCP > 0 {
+		params.TotalCP = totalCP
+	}
+	if techLevel := normalizeAIRequestTechLevel(draft.TechLevel.String()); techLevel != "" {
+		params.TechLevel = techLevel
+	}
+	if defaultLimitWasDerived {
+		params.DisadvantageLimit = aiDefaultDisadvantageLimit(params.TotalCP)
+	}
+	return aiNormalizeCharacterRequestParams(params)
+}
+
+func aiDraftProfilePromptLines(draft aiDraftProfile, includeBlank bool) []string {
+	draft = aiNormalizeDraftProfile(draft)
+	entries := []struct {
+		label string
+		value string
+	}{
+		{label: "Character Concept", value: draft.CharacterConcept.String()},
+		{label: "Name", value: draft.Name.String()},
+		{label: "Title", value: draft.Title.String()},
+		{label: "Age", value: draft.Age.String()},
+		{label: "Weight", value: draft.Weight.String()},
+		{label: "Height", value: draft.Height.String()},
+		{label: "Eye Color", value: draft.EyeColor.String()},
+		{label: "Hair Color", value: draft.HairColor.String()},
+		{label: "Size", value: draft.Size.String()},
+		{label: "Religion", value: draft.Religion.String()},
+		{label: "Tech Level", value: draft.TechLevel.String()},
+		{label: "CP Limit", value: draft.CPLimit.String()},
+		{label: "Starting Wealth", value: draft.StartingWealth.String()},
+		{label: "Game Limitations", value: draft.GameLimitations.String()},
+		{label: "World Setting", value: draft.WorldSetting.String()},
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		value := strings.TrimSpace(entry.value)
+		if value == "" {
+			if !includeBlank {
+				continue
+			}
+			value = "(blank)"
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", entry.label, value))
+	}
+	if len(lines) == 0 && includeBlank {
+		return []string{"- No baseline data collected yet."}
+	}
+	return lines
+}
+
+func aiFormatDraftProfileForPrompt(draft aiDraftProfile, includeBlank bool) string {
+	return strings.Join(aiDraftProfilePromptLines(draft, includeBlank), "\n")
+}
+
+func aiBuildBaselineApprovalMessage(draft aiDraftProfile) string {
+	return strings.TrimSpace("Here is the baseline data. Type \"Approve\" to begin generation, or tell me what to change.\n\n" + aiFormatDraftProfileForPrompt(draft, true))
+}
+
+func aiBuildGenerationRequestFromDraftProfile(originalRequest string, draft aiDraftProfile) string {
+	var builder strings.Builder
+	if text := strings.TrimSpace(originalRequest); text != "" {
+		builder.WriteString("Original request: ")
+		builder.WriteString(strconvQuote(text))
+		builder.WriteByte('\n')
+	}
+	builder.WriteString("Approved baseline data:\n")
+	builder.WriteString(aiFormatDraftProfileForPrompt(draft, true))
+	builder.WriteString("\nGenerate the GURPS 4e character from this approved baseline.")
+	return strings.TrimSpace(builder.String())
+}
+
+func aiIsExplicitApproval(request string) bool {
+	request = strings.TrimSpace(request)
+	if request == "" {
+		return false
+	}
+	return aiExplicitApprovalPattern.MatchString(request)
+}
+
 func (d *aiChatDockable) prepareAIRequest(request string) aiPreparedChatRequest {
 	request = strings.TrimSpace(request)
 	if aiShouldUseDynamicStage1Prompt(request, d.buildSession != nil) {
 		params := aiExtractCharacterRequestParams(request, d.aiDefaultCharacterRequestParams(request))
-		d.buildSession = &aiBuildSessionContext{OriginalRequest: request, Params: params}
+		d.buildSession = &aiBuildSessionContext{State: aiBuildSessionStateGathering, OriginalRequest: request, Params: params, DraftProfile: aiDraftProfileFromParams(params)}
 		return aiPreparedChatRequest{
-			SystemPrompt:   d.aiStage1SystemPrompt(request),
-			UserPrompt:     request,
-			BuildParams:    params,
-			IsInitialBuild: true,
+			SystemPrompt: aiLocalBaselineGatheringSystemPrompt(aiDraftProfileFromParams(params)),
+			UserPrompt:   request,
+			BuildParams:  params,
 		}
 	}
-	if d.buildSession != nil && aiShouldUseBuildContinuationPrompt(request) {
+	if d.buildSession != nil && d.buildSession.State == aiBuildSessionStateGenerating && aiShouldUseBuildContinuationPrompt(request) {
 		return aiPreparedChatRequest{
 			SystemPrompt: d.aiBuildContinuationSystemPrompt(request, d.buildSession.Params),
 			UserPrompt:   aiBuildContinuationUserPrompt(request, d.buildSession.Params),

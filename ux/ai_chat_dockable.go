@@ -3015,6 +3015,53 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 	go func() {
 		defer unison.InvokeTask(func() { d.setThinking(false) })
 
+		if session := d.buildSession; session != nil {
+			if session.State == aiBuildSessionStatePendingApproval {
+				if aiIsExplicitApproval(prompt) {
+					session.State = aiBuildSessionStateGenerating
+					session.Params = aiDraftProfileToCharacterRequestParams(session.DraftProfile, session.Params)
+					session.OriginalRequest = aiBuildGenerationRequestFromDraftProfile(session.OriginalRequest, session.DraftProfile)
+					session.GatheringLog = nil
+					unison.InvokeTask(func() {
+						d.addMessage("AI", i18n.Text("Baseline approved. Starting character generation."))
+					})
+					d.executeLocalThreePhaseGeneration(endpoint, model, session.OriginalRequest, session.Params)
+					return
+				}
+				session.State = aiBuildSessionStateGathering
+				session.GatheringLog = nil
+			}
+			if session.State == aiBuildSessionStateGathering {
+				sysPrompt := aiLocalBaselineGatheringSystemPrompt(session.DraftProfile)
+				writeSystemPromptDebugFile(sysPrompt)
+				messages := make([]aiLocalChatMessage, 0, len(session.GatheringLog)+2)
+				messages = append(messages, aiLocalChatMessage{Role: "system", Content: sysPrompt})
+				messages = append(messages, session.GatheringLog...)
+				messages = append(messages, aiLocalChatMessage{Role: "user", Content: prompt})
+				responseStr, err := d.queryLocalModel(endpoint, model, messages, nil)
+				if err != nil {
+					unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
+					return
+				}
+				if response, ok := aiParseLocalBaselineDraftProfileResponse(responseStr); ok {
+					session.DraftProfile = aiMergeDraftProfile(session.DraftProfile, response.DraftProfile)
+					session.Params = aiDraftProfileToCharacterRequestParams(session.DraftProfile, session.Params)
+					session.State = aiBuildSessionStatePendingApproval
+					session.GatheringLog = nil
+					unison.InvokeTask(func() {
+						d.addMessage("AI", aiBuildBaselineApprovalMessage(session.DraftProfile))
+					})
+					return
+				}
+				session.GatheringLog = append(session.GatheringLog,
+					aiLocalChatMessage{Role: "user", Content: prompt},
+					aiLocalChatMessage{Role: "assistant", Content: responseStr},
+				)
+				unison.InvokeTask(func() { d.addMessage("AI", responseStr) })
+				return
+			}
+		}
+
 		if prepared.IsInitialBuild {
 			d.executeLocalThreePhaseGeneration(endpoint, model, prompt, prepared.BuildParams)
 			return
@@ -3108,6 +3155,33 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 		})
 		<-doneCh
 	}()
+}
+
+type aiLocalBaselineDraftProfileResponse struct {
+	Status       aiFlexibleString `json:"status,omitempty"`
+	DraftProfile aiDraftProfile   `json:"draft_profile,omitempty"`
+}
+
+func aiParseLocalBaselineDraftProfileResponse(text string) (aiLocalBaselineDraftProfileResponse, bool) {
+	for _, payload := range extractJSONPayloads(text) {
+		cleaned := sanitizeAIJSONPayload(payload)
+		if cleaned == "" {
+			continue
+		}
+		var response aiLocalBaselineDraftProfileResponse
+		if err := json.Unmarshal([]byte(cleaned), &response); err != nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(response.Status.String()), "complete") {
+			continue
+		}
+		response.DraftProfile = aiNormalizeDraftProfile(response.DraftProfile)
+		if strings.TrimSpace(response.DraftProfile.CharacterConcept.String()) == "" {
+			continue
+		}
+		return response, true
+	}
+	return aiLocalBaselineDraftProfileResponse{}, false
 }
 
 func aiHistoryWithLastAssistantSummary(history []*genai.Content, plan aiActionPlan) []*genai.Content {

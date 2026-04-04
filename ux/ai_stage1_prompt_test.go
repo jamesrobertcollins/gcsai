@@ -227,9 +227,89 @@ func TestAIBuildLocalPhase2Prompts(t *testing.T) {
 	}
 }
 
+func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
+	prompt := aiLocalBaselineGatheringSystemPrompt(aiDraftProfile{
+		CharacterConcept: aiFlexibleString("Noir Detective"),
+		TechLevel:        aiFlexibleString("8"),
+		CPLimit:          aiFlexibleString("150"),
+	})
+	checks := []string{
+		"Your goal is to collect character profile data from the user",
+		"Character Concept (e.g., Marine Mechanic, Noir Detective)",
+		"Ask the user for missing details, or ask if they want them randomized/left blank.",
+		"Do NOT generate the character sheet yet.",
+		`{"status":"complete","draft_profile":{...}}`,
+		"Character Concept: Noir Detective",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("expected gathering prompt to contain %q, got %q", check, prompt)
+		}
+	}
+}
+
+func TestAIDraftProfileToCharacterRequestParams(t *testing.T) {
+	defaults := aiCharacterRequestParams{TotalCP: 125, TechLevel: "3", Concept: "Fallback", DisadvantageLimit: 30}
+	got := aiDraftProfileToCharacterRequestParams(aiDraftProfile{
+		CharacterConcept: aiFlexibleString("Marine Mechanic"),
+		TechLevel:        aiFlexibleString("TL8"),
+		CPLimit:          aiFlexibleString("200"),
+	}, defaults)
+	if got.Concept != "Marine Mechanic" {
+		t.Fatalf("expected concept %q, got %q", "Marine Mechanic", got.Concept)
+	}
+	if got.TechLevel != "8" {
+		t.Fatalf("expected tech level 8, got %q", got.TechLevel)
+	}
+	if got.TotalCP != 200 {
+		t.Fatalf("expected total CP 200, got %d", got.TotalCP)
+	}
+	if got.DisadvantageLimit != 30 {
+		t.Fatalf("expected explicit disadvantage limit 30 to be preserved, got %d", got.DisadvantageLimit)
+	}
+}
+
+func TestAIDraftProfileToCharacterRequestParamsRecomputesDerivedDisadvantageLimit(t *testing.T) {
+	defaults := aiCharacterRequestParams{TotalCP: 75, TechLevel: "3", Concept: "Fallback", DisadvantageLimit: aiDefaultDisadvantageLimit(75)}
+	got := aiDraftProfileToCharacterRequestParams(aiDraftProfile{
+		CharacterConcept: aiFlexibleString("Marine Mechanic"),
+		TechLevel:        aiFlexibleString("TL8"),
+		CPLimit:          aiFlexibleString("200"),
+	}, defaults)
+	if got.DisadvantageLimit != aiDefaultDisadvantageLimit(200) {
+		t.Fatalf("expected derived disadvantage limit %d, got %d", aiDefaultDisadvantageLimit(200), got.DisadvantageLimit)
+	}
+}
+
+func TestAIPrepareAIRequestStartsBaselineGathering(t *testing.T) {
+	var d aiChatDockable
+	prepared := d.prepareAIRequest("Build a 250-point TL8 cyberpunk investigator.")
+	if d.buildSession == nil {
+		t.Fatal("expected build session to be created")
+	}
+	if d.buildSession.State != aiBuildSessionStateGathering {
+		t.Fatalf("expected state %q, got %q", aiBuildSessionStateGathering, d.buildSession.State)
+	}
+	if d.buildSession.DraftProfile.CharacterConcept.String() != "cyberpunk investigator" {
+		t.Fatalf("expected concept %q, got %q", "cyberpunk investigator", d.buildSession.DraftProfile.CharacterConcept.String())
+	}
+	if d.buildSession.DraftProfile.TechLevel.String() != "8" {
+		t.Fatalf("expected tech level 8, got %q", d.buildSession.DraftProfile.TechLevel.String())
+	}
+	if d.buildSession.DraftProfile.CPLimit.String() != "250" {
+		t.Fatalf("expected cp limit 250, got %q", d.buildSession.DraftProfile.CPLimit.String())
+	}
+	if prepared.IsInitialBuild {
+		t.Fatal("expected initial build request to stay in baseline gathering")
+	}
+	if !strings.Contains(prepared.SystemPrompt, "collect character profile data") {
+		t.Fatalf("expected gathering prompt, got %q", prepared.SystemPrompt)
+	}
+}
+
 func TestAIPrepareAIRequestUsesBuildContinuationSession(t *testing.T) {
 	var d aiChatDockable
-	d.buildSession = &aiBuildSessionContext{Params: aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50}}
+	d.buildSession = &aiBuildSessionContext{State: aiBuildSessionStateGenerating, Params: aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50}}
 	prepared := d.prepareAIRequest("add advantages")
 	if !strings.Contains(prepared.SystemPrompt, "continuing an in-progress GURPS Fourth Edition character build") {
 		t.Fatalf("expected continuation system prompt, got %q", prepared.SystemPrompt)
