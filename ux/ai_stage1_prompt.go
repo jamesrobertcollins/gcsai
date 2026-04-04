@@ -16,6 +16,7 @@ type aiCharacterRequestParams struct {
 	TotalCP           int
 	TechLevel         string
 	Concept           string
+	StartingWealth    int
 	DisadvantageLimit int
 }
 
@@ -135,6 +136,11 @@ When responding outside JSON, keep the answer concise, factual, and directly tie
 		regexp.MustCompile(`(?i)\bdisadvantage(?:s)?(?: limit| cap)?\s*[:=]?\s*-?(\d{1,3})\b`),
 		regexp.MustCompile(`(?i)\b-?(\d{1,3})\s*(?:cp|points?)\s+(?:of|in)\s+disadvantages\b`),
 	}
+	aiRequestStartingWealthPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bstarting wealth\s*(?:of|is|=|:)?\s*\$?\s*([0-9][0-9,]*)\b`),
+		regexp.MustCompile(`(?i)\bwith\s+\$?\s*([0-9][0-9,]*)\s+(?:in\s+)?starting wealth\b`),
+		regexp.MustCompile(`(?i)\bwealth\s*(?:of|is|=|:)?\s*\$?\s*([0-9][0-9,]*)\b`),
+	}
 	aiStage1LeadInPattern        = regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:help\s+me\s+)?(?:create|build|generate|make|design|write|draft)\s+(?:me\s+)?(?:a|an)?\s*`)
 	aiStage1CharacterWordPattern = regexp.MustCompile(`(?i)\b(?:gurps|4e|fourth edition|character|pc|npc|sheet)\b`)
 	aiStage1ConstraintCleanup    = []*regexp.Regexp{
@@ -142,6 +148,8 @@ When responding outside JSON, keep the answer concise, factual, and directly tie
 		regexp.MustCompile(`(?i)\bdisadvantages?\s+(?:capped at|cap(?:ped)? at|limit(?:ed)? to|up to|worth|total(?:ing)?|maximum of)\s*-?\d{1,3}\b`),
 		regexp.MustCompile(`(?i)\bdisadvantage(?:s)?(?: limit| cap)?\s*[:=]?\s*-?\d{1,3}\b`),
 		regexp.MustCompile(`(?i)\b-?\d{1,3}\s*(?:cp|points?)\s+(?:of|in)\s+disadvantages\b`),
+		regexp.MustCompile(`(?i)\bstarting wealth\s*(?:of|is|=|:)?\s*\$?\s*[0-9][0-9,]*\b`),
+		regexp.MustCompile(`(?i)\bwith\s+\$?\s*[0-9][0-9,]*\s+(?:in\s+)?starting wealth\b`),
 		regexp.MustCompile(`(?i)\b\d{2,4}\s*[- ]?(?:cp|pts?|point|points)\b`),
 		regexp.MustCompile(`(?i)\b\d{2,4}\s+character points?\b`),
 		regexp.MustCompile(`(?i)\bTL\s*[0-9]+(?:\^[0-9]+)?(?:/[0-9]+)?\b`),
@@ -182,15 +190,23 @@ func aiShouldUseDynamicStage1Prompt(request string, hasPriorUserMessages bool) b
 
 func aiExtractCharacterRequestParams(request string, defaults aiCharacterRequestParams) aiCharacterRequestParams {
 	params := defaults
+	defaultWealthWasDerived := params.StartingWealth == aiDefaultStartingWealthForTechLevel(params.TechLevel)
 	request = strings.TrimSpace(request)
 	if request == "" {
 		return aiNormalizeCharacterRequestParams(params)
 	}
+	explicitStartingWealth := false
 	if totalCP := aiExtractTotalCP(request); totalCP > 0 {
 		params.TotalCP = totalCP
 	}
 	if techLevel := aiExtractTechLevel(request); techLevel != "" {
 		params.TechLevel = techLevel
+	}
+	if startingWealth := aiExtractStartingWealth(request); startingWealth > 0 {
+		params.StartingWealth = startingWealth
+		explicitStartingWealth = true
+	} else if defaultWealthWasDerived {
+		params.StartingWealth = aiDefaultStartingWealthForTechLevel(params.TechLevel)
 	}
 	if disadvantageLimit := aiExtractDisadvantageLimit(request); disadvantageLimit > 0 {
 		params.DisadvantageLimit = disadvantageLimit
@@ -200,6 +216,9 @@ func aiExtractCharacterRequestParams(request string, defaults aiCharacterRequest
 	}
 	if strings.TrimSpace(params.Concept) == "" {
 		params.Concept = request
+	}
+	if !explicitStartingWealth && defaultWealthWasDerived {
+		params.StartingWealth = aiDefaultStartingWealthForTechLevel(params.TechLevel)
 	}
 	return aiNormalizeCharacterRequestParams(params)
 }
@@ -216,10 +235,52 @@ func aiNormalizeCharacterRequestParams(params aiCharacterRequestParams) aiCharac
 	if params.Concept == "" {
 		params.Concept = "Adventurer"
 	}
+	if params.StartingWealth <= 0 {
+		params.StartingWealth = aiDefaultStartingWealthForTechLevel(params.TechLevel)
+	}
 	if params.DisadvantageLimit <= 0 {
 		params.DisadvantageLimit = aiDefaultDisadvantageLimit(params.TotalCP)
 	}
 	return params
+}
+
+func aiDefaultStartingWealthForTechLevel(techLevel string) int {
+	match := aiLoosePositiveIntPattern.FindString(strings.TrimSpace(techLevel))
+	if match == "" {
+		return 1000
+	}
+	tl, err := strconv.Atoi(match)
+	if err != nil {
+		return 1000
+	}
+	switch {
+	case tl <= 0:
+		return 250
+	case tl == 1:
+		return 500
+	case tl == 2:
+		return 750
+	case tl == 3:
+		return 1000
+	case tl == 4:
+		return 2000
+	case tl == 5:
+		return 5000
+	case tl == 6:
+		return 10000
+	case tl == 7:
+		return 15000
+	case tl == 8:
+		return 20000
+	case tl == 9:
+		return 30000
+	case tl == 10:
+		return 50000
+	case tl == 11:
+		return 75000
+	default:
+		return 100000
+	}
 }
 
 func aiDefaultDisadvantageLimit(totalCP int) int {
@@ -258,6 +319,17 @@ func aiExtractTechLevel(request string) string {
 		}
 	}
 	return ""
+}
+
+func aiExtractStartingWealth(request string) int {
+	for _, pattern := range aiRequestStartingWealthPatterns {
+		if match := pattern.FindStringSubmatch(request); len(match) == 2 {
+			if value := aiParseLoosePositiveInt(match[1]); value > 0 {
+				return value
+			}
+		}
+	}
+	return 0
 }
 
 func aiExtractTotalCP(request string) int {
@@ -394,6 +466,9 @@ func aiDraftProfileFromParams(params aiCharacterRequestParams) aiDraftProfile {
 	if params.TotalCP > 0 {
 		profile.CPLimit = aiFlexibleString(strconv.Itoa(params.TotalCP))
 	}
+	if params.StartingWealth > 0 {
+		profile.StartingWealth = aiFlexibleString("$" + fxp.FromInteger(params.StartingWealth).Comma())
+	}
 	return aiNormalizeDraftProfile(profile)
 }
 
@@ -446,11 +521,11 @@ func aiMergeDraftProfile(base, update aiDraftProfile) aiDraftProfile {
 }
 
 func aiParseLoosePositiveInt(text string) int {
-	match := aiLoosePositiveIntPattern.FindString(strings.TrimSpace(text))
-	if match == "" {
+	matches := aiLoosePositiveIntPattern.FindAllString(strings.TrimSpace(text), -1)
+	if len(matches) == 0 {
 		return 0
 	}
-	value, err := strconv.Atoi(match)
+	value, err := strconv.Atoi(strings.Join(matches, ""))
 	if err != nil || value <= 0 {
 		return 0
 	}
@@ -460,6 +535,7 @@ func aiParseLoosePositiveInt(text string) int {
 func aiDraftProfileToCharacterRequestParams(draft aiDraftProfile, defaults aiCharacterRequestParams) aiCharacterRequestParams {
 	params := defaults
 	defaultLimitWasDerived := params.DisadvantageLimit == aiDefaultDisadvantageLimit(params.TotalCP)
+	defaultWealthWasDerived := params.StartingWealth == aiDefaultStartingWealthForTechLevel(params.TechLevel)
 	draft = aiNormalizeDraftProfile(draft)
 	if concept := strings.TrimSpace(draft.CharacterConcept.String()); concept != "" {
 		params.Concept = concept
@@ -469,6 +545,11 @@ func aiDraftProfileToCharacterRequestParams(draft aiDraftProfile, defaults aiCha
 	}
 	if techLevel := normalizeAIRequestTechLevel(draft.TechLevel.String()); techLevel != "" {
 		params.TechLevel = techLevel
+	}
+	if startingWealth := aiParseLoosePositiveInt(draft.StartingWealth.String()); startingWealth > 0 {
+		params.StartingWealth = startingWealth
+	} else if defaultWealthWasDerived {
+		params.StartingWealth = aiDefaultStartingWealthForTechLevel(params.TechLevel)
 	}
 	if defaultLimitWasDerived {
 		params.DisadvantageLimit = aiDefaultDisadvantageLimit(params.TotalCP)

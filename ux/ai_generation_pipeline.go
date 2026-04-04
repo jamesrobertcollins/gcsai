@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/richardwilkes/gcs/v5/model/criteria"
 	"github.com/richardwilkes/gcs/v5/model/fxp"
 	"github.com/richardwilkes/gcs/v5/model/gurps"
 	"github.com/richardwilkes/toolbox/v2/i18n"
@@ -53,6 +54,22 @@ type aiLocalGenerationPhaseApplyResult struct {
 	Err         error
 }
 
+type aiEquipmentBudgetInfo struct {
+	BaseStartingWealth     int
+	AdjustedStartingWealth int
+	WealthTrait            string
+	CurrentEquipmentValue  int
+}
+
+type aiCharacterAuditSummary struct {
+	TotalCPLimit            int
+	SpentCP                 int
+	UnspentCP               int
+	AllowedUnspent          int
+	AddedPrerequisiteSkills []string
+	TrimmedBackgroundSkills []string
+}
+
 type GenerationBudget struct {
 	TotalCP          int
 	Attributes       int
@@ -72,6 +89,23 @@ type aiGenerationBlueprintResponse struct {
 	Themes            []string                     `json:"themes,omitempty"`
 	BudgetPercentages aiBlueprintBudgetPercentages `json:"budget_percentages,omitempty"`
 	Budget            aiBlueprintBudgetPercentages `json:"budget,omitempty"`
+}
+
+type aiReferencedSkill struct {
+	Name           string
+	Specialization string
+}
+
+type aiMissingSkillSpec struct {
+	Name           string
+	Specialization string
+}
+
+type aiBackgroundSkillCandidate struct {
+	Skill           *gurps.Skill
+	DependencyCount int
+	Level           int
+	Points          int
 }
 
 func (b GenerationBudget) SkillPoints() int {
@@ -293,6 +327,10 @@ func aiSkillsAndSpellsOnlyActionPlan(plan aiActionPlan) aiActionPlan {
 	})
 }
 
+func aiEquipmentOnlyActionPlan(plan aiActionPlan) aiActionPlan {
+	return aiActionPlan{Equipment: append([]aiNamedAction(nil), plan.Equipment...)}
+}
+
 func aiBuildLocalBlueprintPrompts(originalPrompt string, params aiCharacterRequestParams) (systemPrompt, userPrompt string) {
 	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e character-planning function.
 Return exactly one top-level JSON object and nothing else.
@@ -425,6 +463,37 @@ Return exactly one JSON object with skills and spells only.`, params.Concept, st
 	return systemPrompt, userPrompt
 }
 
+func aiBuildLocalEquipmentPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, startingWealth int, summary, vocabulary string) (systemPrompt, userPrompt string) {
+	startingWealthText := aiCurrencyString(startingWealth)
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e equipment generator.
+Return exactly one top-level JSON object and nothing else.
+You may output ONLY the "equipment" field.
+Purchase mundane equipment, weapons, armor, clothing, tools, and travel gear that fit the approved concept, themes, tech level, and current sheet state.
+Do not include profile, attributes, advantages, disadvantages, quirks, skills, spells, or spend_all_cp.
+Do NOT attempt to generate custom Attack blocks or combat stats; simply purchase the weapons.
+Do not assign CP values to items unless it is explicitly customized Signature Gear.
+Stay within the exact cash limit supplied by the user prompt.
+
+Current character sheet context:
+%s`, summary))
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 6: Equipment.
+Approved character concept: %s
+Core themes: %s
+Tech Level: TL %s
+Exact adjusted starting wealth: %s.
+Approved baseline data:
+%s
+
+You have exactly %s to spend on mundane equipment, weapons, and armor. Do not exceed this cash limit.
+Do NOT attempt to generate custom Attack blocks or combat stats; simply purchase the weapons.
+Do not assign CP values to items unless it is explicitly customized Signature Gear.
+Prefer canonical names from this targeted vocabulary when they fit:
+%s
+
+Return exactly one JSON object with equipment only.`, params.Concept, strings.Join(themes, ", "), params.TechLevel, startingWealthText, originalPrompt, startingWealthText, strings.TrimSpace(vocabulary)))
+	return systemPrompt, userPrompt
+}
+
 func (d *aiChatDockable) localGenerationPointsBreakdown() (gurps.PointsBreakdown, error) {
 	resultCh := make(chan struct {
 		breakdown gurps.PointsBreakdown
@@ -487,6 +556,412 @@ func aiSpellSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
 		return 0
 	}
 	return spent
+}
+
+func aiCurrencyString(amount int) string {
+	if amount < 0 {
+		amount = 0
+	}
+	return "$" + fxp.FromInteger(amount).Comma()
+}
+
+func aiAbsInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func (s aiCharacterAuditSummary) String() string {
+	parts := []string{fmt.Sprintf(i18n.Text("Final audit complete. Spent %d/%d CP. Unspent: %d CP. Allowed float: %d CP."), s.SpentCP, s.TotalCPLimit, s.UnspentCP, s.AllowedUnspent)}
+	if len(s.AddedPrerequisiteSkills) != 0 {
+		parts = append(parts, fmt.Sprintf(i18n.Text("Added prerequisite skills: %s."), strings.Join(s.AddedPrerequisiteSkills, ", ")))
+	}
+	if len(s.TrimmedBackgroundSkills) != 0 {
+		parts = append(parts, fmt.Sprintf(i18n.Text("Trimmed background skills: %s."), strings.Join(s.TrimmedBackgroundSkills, ", ")))
+	}
+	switch {
+	case s.UnspentCP < 0:
+		parts = append(parts, fmt.Sprintf(i18n.Text("Warning: character remains %d CP over budget after the audit."), -s.UnspentCP))
+	case s.UnspentCP > s.AllowedUnspent:
+		parts = append(parts, fmt.Sprintf(i18n.Text("Warning: final unspent CP exceeds the allowed float by %d CP."), s.UnspentCP-s.AllowedUnspent))
+	}
+	return strings.Join(parts, " ")
+}
+
+func aiTotalEquipmentValue(entity *gurps.Entity) int {
+	if entity == nil {
+		return 0
+	}
+	return fxp.AsInteger[int](entity.WealthCarried() + entity.WealthNotCarried())
+}
+
+func aiAdjustedStartingWealthForEntity(entity *gurps.Entity, baseStartingWealth int) (int, string) {
+	if entity == nil || baseStartingWealth <= 0 {
+		return max(0, baseStartingWealth), ""
+	}
+	bestScore := 0
+	adjusted := baseStartingWealth
+	traitLabel := ""
+	gurps.Traverse(func(trait *gurps.Trait) bool {
+		candidateAdjusted, candidateLabel, candidateScore, ok := aiAdjustedStartingWealthForTrait(trait, baseStartingWealth)
+		if !ok || candidateScore < bestScore {
+			return false
+		}
+		bestScore = candidateScore
+		adjusted = candidateAdjusted
+		traitLabel = candidateLabel
+		return false
+	}, true, false, entity.Traits...)
+	return adjusted, traitLabel
+}
+
+func aiAdjustedStartingWealthForTrait(trait *gurps.Trait, baseStartingWealth int) (adjusted int, label string, score int, ok bool) {
+	if trait == nil || trait.Container() || baseStartingWealth <= 0 {
+		return 0, "", 0, false
+	}
+	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{trait.NameWithReplacements(), trait.LocalNotesWithReplacements(), trait.UserDescWithReplacements(), strings.Join(trait.Tags, " ")}, " ")))
+	if text == "" {
+		return 0, "", 0, false
+	}
+	points := aiAbsInt(fxp.AsInteger[int](trait.AdjustedPoints()))
+	apply := func(name string, numerator, denominator, fallbackScore int) (int, string, int, bool) {
+		if denominator <= 0 {
+			return 0, "", 0, false
+		}
+		score := points
+		if score <= 0 {
+			score = fallbackScore
+		}
+		return baseStartingWealth * numerator / denominator, name, score, true
+	}
+	switch {
+	case strings.Contains(text, "dead broke"):
+		return apply("Dead Broke", 0, 1, 100)
+	case strings.Contains(text, "very wealthy"):
+		return apply("Very Wealthy", 20, 1, 30)
+	case strings.Contains(text, "filthy rich"):
+		return apply("Filthy Rich", 100, 1, 50)
+	case strings.Contains(text, "multimillionaire"):
+		levels := 1
+		if trait.IsLeveled() {
+			levels = max(1, fxp.AsInteger[int](trait.CurrentLevel()))
+		} else if idx := strings.Index(text, "multimillionaire"); idx >= 0 {
+			if parsed := aiParseLoosePositiveInt(text[idx+len("multimillionaire"):]); parsed > 0 {
+				levels = parsed
+			}
+		}
+		multiplier := 100
+		for i := 0; i < levels; i++ {
+			multiplier *= 10
+		}
+		return apply(fmt.Sprintf("Multimillionaire %d", levels), multiplier, 1, 50+levels)
+	case strings.Contains(text, "wealthy"):
+		return apply("Wealthy", 5, 1, 20)
+	case strings.Contains(text, "comfortable"):
+		return apply("Comfortable", 2, 1, 10)
+	case strings.Contains(text, "struggling"):
+		return apply("Struggling", 1, 2, 10)
+	case strings.Contains(text, "poor"):
+		return apply("Poor", 1, 5, 15)
+	default:
+		return 0, "", 0, false
+	}
+}
+
+func (d *aiChatDockable) localGenerationEquipmentBudgetInfo(baseStartingWealth int) (aiEquipmentBudgetInfo, error) {
+	resultCh := make(chan struct {
+		info aiEquipmentBudgetInfo
+		err  error
+	}, 1)
+	unison.InvokeTask(func() {
+		sheet := d.sheetOrCreateNew()
+		if sheet == nil || sheet.entity == nil {
+			resultCh <- struct {
+				info aiEquipmentBudgetInfo
+				err  error
+			}{err: fmt.Errorf("no active sheet to apply changes to")}
+			return
+		}
+		adjusted, wealthTrait := aiAdjustedStartingWealthForEntity(sheet.entity, baseStartingWealth)
+		resultCh <- struct {
+			info aiEquipmentBudgetInfo
+			err  error
+		}{info: aiEquipmentBudgetInfo{
+			BaseStartingWealth:     max(0, baseStartingWealth),
+			AdjustedStartingWealth: adjusted,
+			WealthTrait:            wealthTrait,
+			CurrentEquipmentValue:  aiTotalEquipmentValue(sheet.entity),
+		}}
+	})
+	result := <-resultCh
+	return result.info, result.err
+}
+
+func aiAuditSkillDisplayName(name, specialization string) string {
+	name = strings.TrimSpace(name)
+	specialization = strings.TrimSpace(specialization)
+	if specialization == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (%s)", name, specialization)
+}
+
+func aiPreviousValidSkillPointCost(currentPoints int) int {
+	if currentPoints <= 1 {
+		return 0
+	}
+	if currentPoints == 2 {
+		return 1
+	}
+	if currentPoints <= 4 {
+		return 2
+	}
+	return aiLargestValidSkillPointCostNotExceeding(currentPoints - 1)
+}
+
+func aiCollectMissingSkillPrereqs(prereq gurps.Prereq, entity *gurps.Entity, exclude any, additions map[string]aiMissingSkillSpec) {
+	switch typed := prereq.(type) {
+	case *gurps.PrereqList:
+		if typed == nil {
+			return
+		}
+		for _, child := range typed.Prereqs {
+			aiCollectMissingSkillPrereqs(child, entity, exclude, additions)
+		}
+	case *gurps.SkillPrereq:
+		if typed == nil || !typed.Has || typed.NameCriteria.Compare != criteria.IsText {
+			return
+		}
+		if typed.SpecializationCriteria.Compare != criteria.AnyText && typed.SpecializationCriteria.Compare != criteria.IsText {
+			return
+		}
+		hasEquipmentPenalty := false
+		if typed.Satisfied(entity, exclude, nil, "", &hasEquipmentPenalty) {
+			return
+		}
+		name := strings.TrimSpace(typed.NameCriteria.Qualifier)
+		if name == "" {
+			return
+		}
+		specialization := ""
+		if typed.SpecializationCriteria.Compare == criteria.IsText {
+			specialization = strings.TrimSpace(typed.SpecializationCriteria.Qualifier)
+		}
+		key := strings.ToLower(name) + "\x00" + strings.ToLower(specialization)
+		if _, exists := additions[key]; exists {
+			return
+		}
+		additions[key] = aiMissingSkillSpec{Name: name, Specialization: specialization}
+	}
+}
+
+func aiApplyMissingPrerequisiteSkills(entity *gurps.Entity) []string {
+	if entity == nil {
+		return nil
+	}
+	additions := make(map[string]aiMissingSkillSpec)
+	gurps.Traverse(func(skill *gurps.Skill) bool {
+		if skill == nil || skill.Container() || skill.Prereq == nil {
+			return false
+		}
+		aiCollectMissingSkillPrereqs(skill.Prereq, entity, skill, additions)
+		return false
+	}, false, true, entity.Skills...)
+	gurps.Traverse(func(spell *gurps.Spell) bool {
+		if spell == nil || spell.Container() || spell.Prereq == nil {
+			return false
+		}
+		aiCollectMissingSkillPrereqs(spell.Prereq, entity, spell, additions)
+		return false
+	}, false, true, entity.Spells...)
+	if len(additions) == 0 {
+		return nil
+	}
+	added := make([]string, 0, len(additions))
+	orderedKeys := make([]string, 0, len(additions))
+	for key := range additions {
+		orderedKeys = append(orderedKeys, key)
+	}
+	sort.Strings(orderedKeys)
+	skills := append([]*gurps.Skill(nil), entity.Skills...)
+	for _, key := range orderedKeys {
+		spec := additions[key]
+		existing := entity.BestSkillNamed(spec.Name, spec.Specialization, false, nil)
+		if existing != nil {
+			if fxp.AsInteger[int](existing.Points) <= 0 {
+				existing.SetRawPoints(fxp.One)
+				added = append(added, aiAuditSkillDisplayName(spec.Name, spec.Specialization))
+			}
+			continue
+		}
+		skill := gurps.NewSkill(entity, nil, false)
+		skill.Name = spec.Name
+		skill.Specialization = spec.Specialization
+		skill.SetRawPoints(fxp.One)
+		skills = append(skills, skill)
+		added = append(added, aiAuditSkillDisplayName(spec.Name, spec.Specialization))
+	}
+	if len(skills) != len(entity.Skills) {
+		entity.SetSkillList(skills)
+	}
+	if len(added) != 0 {
+		entity.Recalculate()
+	}
+	return added
+}
+
+func aiCollectReferencedSkillPrereqs(prereq gurps.Prereq, refs *[]aiReferencedSkill) {
+	switch typed := prereq.(type) {
+	case *gurps.PrereqList:
+		if typed == nil {
+			return
+		}
+		for _, child := range typed.Prereqs {
+			aiCollectReferencedSkillPrereqs(child, refs)
+		}
+	case *gurps.SkillPrereq:
+		if typed == nil || !typed.Has || typed.NameCriteria.Compare != criteria.IsText {
+			return
+		}
+		if typed.SpecializationCriteria.Compare != criteria.AnyText && typed.SpecializationCriteria.Compare != criteria.IsText {
+			return
+		}
+		ref := aiReferencedSkill{Name: strings.TrimSpace(typed.NameCriteria.Qualifier)}
+		if ref.Name == "" {
+			return
+		}
+		if typed.SpecializationCriteria.Compare == criteria.IsText {
+			ref.Specialization = strings.TrimSpace(typed.SpecializationCriteria.Qualifier)
+		}
+		*refs = append(*refs, ref)
+	}
+}
+
+func aiBackgroundSkillTrimCandidates(entity *gurps.Entity) []aiBackgroundSkillCandidate {
+	if entity == nil {
+		return nil
+	}
+	references := make([]aiReferencedSkill, 0)
+	gurps.Traverse(func(skill *gurps.Skill) bool {
+		if skill != nil && !skill.Container() && skill.Prereq != nil {
+			aiCollectReferencedSkillPrereqs(skill.Prereq, &references)
+		}
+		return false
+	}, false, true, entity.Skills...)
+	gurps.Traverse(func(spell *gurps.Spell) bool {
+		if spell != nil && !spell.Container() && spell.Prereq != nil {
+			aiCollectReferencedSkillPrereqs(spell.Prereq, &references)
+		}
+		return false
+	}, false, true, entity.Spells...)
+	candidates := make([]aiBackgroundSkillCandidate, 0, len(entity.Skills))
+	gurps.Traverse(func(skill *gurps.Skill) bool {
+		if skill == nil || skill.Container() || skill.IsTechnique() || skill.AdjustedPoints(nil) <= 0 {
+			return false
+		}
+		candidate := aiBackgroundSkillCandidate{
+			Skill:  skill,
+			Level:  fxp.AsInteger[int](skill.CalculateLevel(nil).Level),
+			Points: fxp.AsInteger[int](skill.Points),
+		}
+		for _, ref := range references {
+			if !strings.EqualFold(skill.NameWithReplacements(), ref.Name) {
+				continue
+			}
+			if ref.Specialization != "" && !strings.EqualFold(skill.SpecializationWithReplacements(), ref.Specialization) {
+				continue
+			}
+			candidate.DependencyCount++
+		}
+		candidates = append(candidates, candidate)
+		return false
+	}, false, true, entity.Skills...)
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].DependencyCount != candidates[j].DependencyCount {
+			return candidates[i].DependencyCount < candidates[j].DependencyCount
+		}
+		if candidates[i].Level != candidates[j].Level {
+			return candidates[i].Level < candidates[j].Level
+		}
+		if candidates[i].Points != candidates[j].Points {
+			return candidates[i].Points < candidates[j].Points
+		}
+		return aiResolvedSkillDisplayName(candidates[i].Skill) < aiResolvedSkillDisplayName(candidates[j].Skill)
+	})
+	return candidates
+}
+
+func aiFinalizeCharacterAuditDetailed(entity *gurps.Entity, totalCPLimit int) aiCharacterAuditSummary {
+	summary := aiCharacterAuditSummary{TotalCPLimit: totalCPLimit}
+	if entity == nil {
+		return summary
+	}
+	if totalCPLimit <= 0 {
+		totalCPLimit = fxp.AsInteger[int](entity.TotalPoints)
+		summary.TotalCPLimit = totalCPLimit
+	}
+	entity.TotalPoints = fxp.FromInteger(totalCPLimit)
+	entity.Recalculate()
+	summary.AllowedUnspent = max(1, int(float64(totalCPLimit)*0.02))
+	summary.AddedPrerequisiteSkills = aiApplyMissingPrerequisiteSkills(entity)
+	entity.Recalculate()
+	for fxp.AsInteger[int](entity.UnspentPoints()) < 0 {
+		trimmed := false
+		for _, candidate := range aiBackgroundSkillTrimCandidates(entity) {
+			currentPoints := fxp.AsInteger[int](candidate.Skill.Points)
+			nextPoints := aiPreviousValidSkillPointCost(currentPoints)
+			if nextPoints >= currentPoints {
+				continue
+			}
+			candidate.Skill.SetRawPoints(fxp.FromInteger(nextPoints))
+			summary.TrimmedBackgroundSkills = append(summary.TrimmedBackgroundSkills, fmt.Sprintf("%s %d->%d", aiResolvedSkillDisplayName(candidate.Skill), currentPoints, nextPoints))
+			entity.Recalculate()
+			trimmed = true
+			break
+		}
+		if !trimmed {
+			break
+		}
+	}
+	entity.TotalPoints = fxp.FromInteger(totalCPLimit)
+	entity.Recalculate()
+	points := entity.PointsBreakdown()
+	summary.SpentCP = fxp.AsInteger[int](points.Total())
+	summary.UnspentCP = fxp.AsInteger[int](entity.UnspentPoints())
+	return summary
+}
+
+func FinalizeCharacterAudit(entity *gurps.Entity, totalCPLimit int) {
+	fmt.Println(aiFinalizeCharacterAuditDetailed(entity, totalCPLimit).String())
+}
+
+func (d *aiChatDockable) finalizeLocalGenerationAudit(totalCPLimit int) (string, error) {
+	resultCh := make(chan struct {
+		summary string
+		err     error
+	}, 1)
+	unison.InvokeTask(func() {
+		sheet := d.sheetOrCreateNew()
+		if sheet == nil || sheet.entity == nil {
+			resultCh <- struct {
+				summary string
+				err     error
+			}{err: fmt.Errorf("no active sheet to apply changes to")}
+			return
+		}
+		auditSummary := aiFinalizeCharacterAuditDetailed(sheet.entity, totalCPLimit)
+		fmt.Println(auditSummary.String())
+		sheet.Rebuild(true)
+		ActivateDockable(sheet)
+		MarkModified(sheet)
+		resultCh <- struct {
+			summary string
+			err     error
+		}{summary: auditSummary.String()}
+	})
+	result := <-resultCh
+	return result.summary, result.err
 }
 
 func aiResolvedActionPlanCount(plan aiActionPlan) int {
@@ -1133,7 +1608,87 @@ func (d *aiChatDockable) executeLocalGenerationPipeline(endpoint, model, origina
 		} else {
 			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 5 spent %d CP from the %d CP combined skills bucket (skills: %d CP, spells: %d CP)."), totalSkillSpend, budget.SkillPoints(), skillSpend, spellSpend))
 		}
-		d.addMessage("AI", i18n.Text("Local generation pipeline paused after Step 5. Later redesigned stages are not implemented yet."))
+	})
+
+	equipmentVocabulary := aiFilterThematicVocabularySections(thematicVocabulary, "Equipment")
+	equipmentBudgetInfo, err := d.localGenerationEquipmentBudgetInfo(params.StartingWealth)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 6 could not calculate the equipment budget: %v"), err))
+		})
+		return
+	}
+	unison.InvokeTask(func() {
+		if equipmentBudgetInfo.WealthTrait != "" && equipmentBudgetInfo.AdjustedStartingWealth != equipmentBudgetInfo.BaseStartingWealth {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 6 equipment budget: %s after applying %s to the base starting wealth of %s."), aiCurrencyString(equipmentBudgetInfo.AdjustedStartingWealth), equipmentBudgetInfo.WealthTrait, aiCurrencyString(equipmentBudgetInfo.BaseStartingWealth)))
+		} else {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 6 equipment budget: %s."), aiCurrencyString(equipmentBudgetInfo.AdjustedStartingWealth)))
+		}
+	})
+	equipmentLabel := i18n.Text("Step 6: Equipment")
+	equipmentSystemPrompt, equipmentUserPrompt := aiBuildLocalEquipmentPrompts(originalPrompt, params, themes, equipmentBudgetInfo.AdjustedStartingWealth, skillApply.Summary, equipmentVocabulary)
+	writeSystemPromptDebugFile(equipmentSystemPrompt)
+	equipmentResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(equipmentSystemPrompt, equipmentUserPrompt), aiActionPlanJSONSchema())
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", err.Error())
+		})
+		return
+	}
+	equipmentResolution, err := d.resolveFilteredAIResponseText(equipmentResponse, aiEquipmentOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", equipmentResponse)
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 6 could not be resolved: %v"), err))
+		})
+		return
+	}
+	equipmentResolution, err = d.executeLocalCorrectionLoop(endpoint, model, equipmentSystemPrompt, equipmentLabel, equipmentResolution, aiEquipmentOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", aiLocalPhaseMessage(equipmentLabel, equipmentResponse))
+			for _, warning := range equipmentResolution.Warnings {
+				d.addMessage("AI", warning)
+			}
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 6 could not continue: %v"), err))
+		})
+		return
+	}
+	equipmentApply := d.applyLocalGenerationPhase(equipmentLabel, equipmentResponse, equipmentResolution, targetCP)
+	if equipmentApply.Err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 6 could not be applied: %v"), equipmentApply.Err))
+		})
+		return
+	}
+	afterEquipmentBudgetInfo, err := d.localGenerationEquipmentBudgetInfo(params.StartingWealth)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 6 budget check could not be calculated: %v"), err))
+		})
+		return
+	}
+	equipmentSpend := afterEquipmentBudgetInfo.CurrentEquipmentValue - equipmentBudgetInfo.CurrentEquipmentValue
+	if equipmentSpend < 0 {
+		equipmentSpend = 0
+	}
+	unison.InvokeTask(func() {
+		if afterEquipmentBudgetInfo.CurrentEquipmentValue > afterEquipmentBudgetInfo.AdjustedStartingWealth {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: Step 6 equipment totals %s, exceeding the cash limit of %s."), aiCurrencyString(afterEquipmentBudgetInfo.CurrentEquipmentValue), aiCurrencyString(afterEquipmentBudgetInfo.AdjustedStartingWealth)))
+		} else {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 6 purchased %s of additional equipment within the %s cash limit. Current equipment total: %s."), aiCurrencyString(equipmentSpend), aiCurrencyString(afterEquipmentBudgetInfo.AdjustedStartingWealth), aiCurrencyString(afterEquipmentBudgetInfo.CurrentEquipmentValue)))
+		}
+	})
+
+	auditSummary, err := d.finalizeLocalGenerationAudit(targetCP)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 7 could not complete the final audit: %v"), err))
+		})
+		return
+	}
+	unison.InvokeTask(func() {
+		d.addMessage("AI", fmt.Sprintf("%s\n%s", i18n.Text("Step 7: The Go Audit"), auditSummary))
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/richardwilkes/gcs/v5/model/criteria"
 	"github.com/richardwilkes/gcs/v5/model/fxp"
 	"github.com/richardwilkes/gcs/v5/model/gurps"
 )
@@ -146,6 +147,93 @@ func TestAIFilterThematicVocabularySections(t *testing.T) {
 	}
 	if !strings.Contains(filtered, "Disadvantages: Overconfidence") || !strings.Contains(filtered, "Quirks: Keeps tools immaculate") {
 		t.Fatalf("expected filtered vocabulary to keep story sections, got %q", filtered)
+	}
+}
+
+func TestAIBuildLocalEquipmentPrompts(t *testing.T) {
+	systemPrompt, userPrompt := aiBuildLocalEquipmentPrompts(
+		"Build a TL8 marine mechanic.",
+		aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "marine mechanic", StartingWealth: 20000, DisadvantageLimit: 50},
+		[]string{"Marine", "Mechanic", "Veteran"},
+		20000,
+		"Current character sheet context: skills and advantages already applied.",
+		"Thematic Canonical GURPS Vocabulary:\n- Equipment: Tool Kit, Light Scale Armor",
+	)
+	combined := systemPrompt + "\n" + userPrompt
+	checks := []string{
+		"deterministic GURPS 4e equipment generator",
+		"You may output ONLY the \"equipment\" field.",
+		"You have exactly $20,000 to spend on mundane equipment, weapons, and armor.",
+		"Do NOT attempt to generate custom Attack blocks or combat stats; simply purchase the weapons.",
+		"Do not assign CP values to items unless it is explicitly customized Signature Gear.",
+		"Tech Level: TL 8",
+		"Current character sheet context: skills and advantages already applied.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(combined, check) {
+			t.Fatalf("expected equipment prompts to contain %q, got %q", check, combined)
+		}
+	}
+}
+
+func TestAIAdjustedStartingWealthForEntity(t *testing.T) {
+	entity := gurps.NewEntity()
+	wealthy := gurps.NewTrait(entity, nil, false)
+	wealthy.Name = "Wealthy"
+	wealthy.BasePoints = fxp.FromInteger(20)
+	entity.SetTraitList([]*gurps.Trait{wealthy})
+	entity.Recalculate()
+
+	adjusted, wealthTrait := aiAdjustedStartingWealthForEntity(entity, 20000)
+	if adjusted != 100000 {
+		t.Fatalf("expected Wealthy to raise starting wealth to 100000, got %d", adjusted)
+	}
+	if wealthTrait != "Wealthy" {
+		t.Fatalf("expected wealth trait label %q, got %q", "Wealthy", wealthTrait)
+	}
+}
+
+func TestFinalizeCharacterAuditAddsMissingPrereqAndTrimsBackgroundSkills(t *testing.T) {
+	entity := gurps.NewEntity()
+	entity.TotalPoints = fxp.FromInteger(6)
+
+	alchemy := gurps.NewSkill(entity, nil, false)
+	alchemy.Name = "Alchemy"
+	alchemy.SetRawPoints(fxp.FromInteger(4))
+	alchemy.Prereq = gurps.NewPrereqList()
+	alchemyPrereq := gurps.NewSkillPrereq()
+	alchemyPrereq.NameCriteria.Compare = criteria.IsText
+	alchemyPrereq.NameCriteria.Qualifier = "Thaumatology"
+	alchemyPrereq.LevelCriteria.Compare = criteria.AtLeastNumber
+	alchemyPrereq.LevelCriteria.Qualifier = fxp.One
+	alchemy.Prereq.Prereqs = gurps.Prereqs{alchemyPrereq}
+
+	cooking := gurps.NewSkill(entity, nil, false)
+	cooking.Name = "Cooking"
+	cooking.SetRawPoints(fxp.FromInteger(2))
+
+	entity.SetSkillList([]*gurps.Skill{alchemy, cooking})
+	entity.Recalculate()
+
+	summary := aiFinalizeCharacterAuditDetailed(entity, 6)
+	thaumatology := entity.BestSkillNamed("Thaumatology", "", false, nil)
+	if thaumatology == nil {
+		t.Fatal("expected missing prerequisite skill to be added")
+	}
+	if got := fxp.AsInteger[int](thaumatology.Points); got != 1 {
+		t.Fatalf("expected Thaumatology to be added at 1 point, got %d", got)
+	}
+	if got := fxp.AsInteger[int](cooking.Points); got != 1 {
+		t.Fatalf("expected Cooking to be trimmed to 1 point, got %d", got)
+	}
+	if summary.UnspentCP != 0 {
+		t.Fatalf("expected final audit to end on budget, got unspent %d", summary.UnspentCP)
+	}
+	if len(summary.AddedPrerequisiteSkills) != 1 || summary.AddedPrerequisiteSkills[0] != "Thaumatology" {
+		t.Fatalf("expected Thaumatology to be reported as an added prerequisite skill, got %#v", summary.AddedPrerequisiteSkills)
+	}
+	if len(summary.TrimmedBackgroundSkills) == 0 || !strings.Contains(summary.TrimmedBackgroundSkills[0], "Cooking") {
+		t.Fatalf("expected Cooking to be reported as a trimmed background skill, got %#v", summary.TrimmedBackgroundSkills)
 	}
 }
 

@@ -10,6 +10,7 @@ func TestAIExtractCharacterRequestParams(t *testing.T) {
 		TotalCP:           150,
 		TechLevel:         "3",
 		Concept:           "Fallback Concept",
+		StartingWealth:    1000,
 		DisadvantageLimit: 50,
 	}
 	got := aiExtractCharacterRequestParams("Build a 250-point TL8 cyberpunk investigator with up to 40 points in disadvantages.", defaults)
@@ -25,6 +26,9 @@ func TestAIExtractCharacterRequestParams(t *testing.T) {
 	if got.Concept != "cyberpunk investigator" {
 		t.Fatalf("expected concept %q, got %q", "cyberpunk investigator", got.Concept)
 	}
+	if got.StartingWealth != 20000 {
+		t.Fatalf("expected default TL8 starting wealth 20000, got %d", got.StartingWealth)
+	}
 }
 
 func TestAIExtractCharacterRequestParamsKeepsDefaultsWhenMissing(t *testing.T) {
@@ -32,6 +36,7 @@ func TestAIExtractCharacterRequestParamsKeepsDefaultsWhenMissing(t *testing.T) {
 		TotalCP:           125,
 		TechLevel:         "4",
 		Concept:           "Fallback Concept",
+		StartingWealth:    2000,
 		DisadvantageLimit: 30,
 	}
 	got := aiExtractCharacterRequestParams("Create a wandering knight for GURPS", defaults)
@@ -46,6 +51,20 @@ func TestAIExtractCharacterRequestParamsKeepsDefaultsWhenMissing(t *testing.T) {
 	}
 	if got.Concept != "wandering knight" {
 		t.Fatalf("expected concept %q, got %q", "wandering knight", got.Concept)
+	}
+	if got.StartingWealth != 2000 {
+		t.Fatalf("expected StartingWealth 2000, got %d", got.StartingWealth)
+	}
+}
+
+func TestAIExtractCharacterRequestParamsStartingWealth(t *testing.T) {
+	defaults := aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "Fallback", StartingWealth: 20000, DisadvantageLimit: 50}
+	got := aiExtractCharacterRequestParams("Build a TL8 detective with $75,000 starting wealth.", defaults)
+	if got.StartingWealth != 75000 {
+		t.Fatalf("expected StartingWealth 75000, got %d", got.StartingWealth)
+	}
+	if got.Concept != "detective" {
+		t.Fatalf("expected concept %q, got %q", "detective", got.Concept)
 	}
 }
 
@@ -249,11 +268,12 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 }
 
 func TestAIDraftProfileToCharacterRequestParams(t *testing.T) {
-	defaults := aiCharacterRequestParams{TotalCP: 125, TechLevel: "3", Concept: "Fallback", DisadvantageLimit: 30}
+	defaults := aiCharacterRequestParams{TotalCP: 125, TechLevel: "3", Concept: "Fallback", StartingWealth: 1000, DisadvantageLimit: 30}
 	got := aiDraftProfileToCharacterRequestParams(aiDraftProfile{
 		CharacterConcept: aiFlexibleString("Marine Mechanic"),
 		TechLevel:        aiFlexibleString("TL8"),
 		CPLimit:          aiFlexibleString("200"),
+		StartingWealth:   aiFlexibleString("$20,000"),
 	}, defaults)
 	if got.Concept != "Marine Mechanic" {
 		t.Fatalf("expected concept %q, got %q", "Marine Mechanic", got.Concept)
@@ -264,13 +284,16 @@ func TestAIDraftProfileToCharacterRequestParams(t *testing.T) {
 	if got.TotalCP != 200 {
 		t.Fatalf("expected total CP 200, got %d", got.TotalCP)
 	}
+	if got.StartingWealth != 20000 {
+		t.Fatalf("expected starting wealth 20000, got %d", got.StartingWealth)
+	}
 	if got.DisadvantageLimit != 30 {
 		t.Fatalf("expected explicit disadvantage limit 30 to be preserved, got %d", got.DisadvantageLimit)
 	}
 }
 
 func TestAIDraftProfileToCharacterRequestParamsRecomputesDerivedDisadvantageLimit(t *testing.T) {
-	defaults := aiCharacterRequestParams{TotalCP: 75, TechLevel: "3", Concept: "Fallback", DisadvantageLimit: aiDefaultDisadvantageLimit(75)}
+	defaults := aiCharacterRequestParams{TotalCP: 75, TechLevel: "3", Concept: "Fallback", StartingWealth: 1000, DisadvantageLimit: aiDefaultDisadvantageLimit(75)}
 	got := aiDraftProfileToCharacterRequestParams(aiDraftProfile{
 		CharacterConcept: aiFlexibleString("Marine Mechanic"),
 		TechLevel:        aiFlexibleString("TL8"),
@@ -278,6 +301,15 @@ func TestAIDraftProfileToCharacterRequestParamsRecomputesDerivedDisadvantageLimi
 	}, defaults)
 	if got.DisadvantageLimit != aiDefaultDisadvantageLimit(200) {
 		t.Fatalf("expected derived disadvantage limit %d, got %d", aiDefaultDisadvantageLimit(200), got.DisadvantageLimit)
+	}
+	if got.StartingWealth != 20000 {
+		t.Fatalf("expected default TL8 starting wealth 20000, got %d", got.StartingWealth)
+	}
+}
+
+func TestAIParseLoosePositiveIntHandlesCurrencySeparators(t *testing.T) {
+	if got := aiParseLoosePositiveInt("$20,000"); got != 20000 {
+		t.Fatalf("expected 20000, got %d", got)
 	}
 }
 
