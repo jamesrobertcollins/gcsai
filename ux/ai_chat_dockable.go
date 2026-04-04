@@ -1264,6 +1264,7 @@ func (d *aiChatDockable) handleAIResponseWithCh(responseStr string, retryCh chan
 			retryCh <- nil
 			return
 		}
+		d.replaceLastAssistantHistoryWithAppliedSummary(resolvedPlan)
 		warnings = append(warnings, applyWarnings...)
 		retryItems = append(retryItems, applyRetryItems...)
 	}
@@ -2978,14 +2979,16 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 		retryItems := <-retryCh
 		if len(retryItems) > 0 {
 			correctionPrompt := buildAIRetryPrompt(retryItems)
-			correctionStr, err2 := d.sendGeminiRequest(ctx, resolvedModel, d.aiGeminiAssistantSystemPrompt(), correctionPrompt, true)
-			if err2 == nil {
-				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionPrompt)}, Role: "user"})
-				d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(correctionStr)}, Role: "model"})
-				doneCh := make(chan struct{}, 1)
-				unison.InvokeTask(func() { d.applyCorrectionResponse(correctionStr); doneCh <- struct{}{} })
-				<-doneCh
+			correctionStr, err2 := d.sendGeminiRequest(ctx, resolvedModel, d.aiGeminiCorrectionSystemPrompt(), correctionPrompt, true)
+			if err2 != nil {
+				unison.InvokeTask(func() {
+					d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be generated; unresolved items were skipped: %v"), err2))
+				})
+				return
 			}
+			doneCh := make(chan struct{}, 1)
+			unison.InvokeTask(func() { d.applyCorrectionResponse(correctionStr); doneCh <- struct{}{} })
+			<-doneCh
 		}
 	}()
 }
@@ -3107,18 +3110,25 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 	}()
 }
 
-func (d *aiChatDockable) replaceLastAssistantHistoryWithAppliedSummary(plan aiActionPlan) {
-	if len(d.chatHistory) == 0 {
-		return
+func aiHistoryWithLastAssistantSummary(history []*genai.Content, plan aiActionPlan) []*genai.Content {
+	if len(history) == 0 {
+		return history
 	}
-	last := d.chatHistory[len(d.chatHistory)-1]
+	last := history[len(history)-1]
 	if last == nil || aiNormalizeLocalRole(last.Role) != "assistant" {
-		return
+		return history
 	}
-	last.Parts = []genai.Part{genai.Text(aiAppliedPlanHistorySummary(plan, d.currentCharacterSummary()))}
+	updated := append([]*genai.Content(nil), history...)
+	replacement := &genai.Content{Role: last.Role, Parts: []genai.Part{genai.Text(aiAppliedPlanHistorySummary(plan))}}
+	updated[len(updated)-1] = replacement
+	return updated
 }
 
-func aiAppliedPlanHistorySummary(plan aiActionPlan, currentSummary string) string {
+func (d *aiChatDockable) replaceLastAssistantHistoryWithAppliedSummary(plan aiActionPlan) {
+	d.chatHistory = aiHistoryWithLastAssistantSummary(d.chatHistory, plan)
+}
+
+func aiAppliedPlanHistorySummary(plan aiActionPlan) string {
 	updated := make([]string, 0, 6)
 	if plan.Profile != nil {
 		updated = append(updated, "profile")
@@ -3147,11 +3157,6 @@ func aiAppliedPlanHistorySummary(plan aiActionPlan, currentSummary string) strin
 		builder.WriteString(" Updated: ")
 		builder.WriteString(strings.Join(updated, ", "))
 		builder.WriteString(".")
-	}
-	currentSummary = strings.TrimSpace(currentSummary)
-	if currentSummary != "" {
-		builder.WriteString("\n")
-		builder.WriteString(currentSummary)
 	}
 	return builder.String()
 }

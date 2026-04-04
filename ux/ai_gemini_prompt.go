@@ -432,6 +432,15 @@ Current character sheet context:
 %s`, summary))
 }
 
+func (d *aiChatDockable) aiGeminiCorrectionSystemPrompt() string {
+	return strings.TrimSpace(`You are Google Gemini acting as a GURPS Fourth Edition library-resolution assistant.
+Return exactly one top-level JSON object and nothing else.
+Only include corrected entries for the unresolved items in the user prompt.
+Use only the candidate ids and candidate names shown there.
+Preserve points, quantity, notes, and description unless the selected candidate requires a different nameable value.
+If no valid correction exists for an item, omit it.`)
+}
+
 func (d *aiChatDockable) aiGeminiBuildPrompts(brief aiGeminiBuildBrief) (systemPrompt, userPrompt string) {
 	summary := d.currentCharacterSummary()
 	disadvantageLimit := aiDefaultDisadvantageLimit(brief.PointTotal)
