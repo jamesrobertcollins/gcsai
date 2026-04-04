@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/richardwilkes/gcs/v5/model/gurps"
 )
 
 func TestAIResolveSkillUsesCanonicalSpecialization(t *testing.T) {
@@ -462,6 +464,40 @@ func TestAIRecommendedTermsForConceptDiversifiesSkillFamilies(t *testing.T) {
 	}
 	if !strings.Contains(terms, "Politics") {
 		t.Fatalf("expected diversified skill recommendation to include Politics, got %q", terms)
+	}
+}
+
+func TestGetThematicVocabularySplitsPerksFromAdvantages(t *testing.T) {
+	previousCache := globalAILibraryCatalogCache
+	globalAILibraryCatalogCache = aiLibraryCatalogCache{}
+	t.Cleanup(func() {
+		globalAILibraryCatalogCache = previousCache
+	})
+	libraries := gurps.GlobalSettings().Libraries()
+	signature := aiLibraryCatalogSignature(libraries)
+
+	globalAILibraryCatalogCache.catalog = newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-signature", Name: "Signature Gear", DisplayName: "Signature Gear", BaseName: "Signature Gear", PointCost: 5},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "perk-craft", Name: "Craftiness", DisplayName: "Craftiness", BaseName: "Craftiness", PointCost: 1},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryDisadvantage, ID: "dis-overconfidence", Name: "Overconfidence", DisplayName: "Overconfidence", BaseName: "Overconfidence", PointCost: -5},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryQuirk, ID: "quirk-tools", Name: "Keeps tools immaculate", DisplayName: "Keeps tools immaculate", BaseName: "Keeps tools immaculate", PointCost: -1},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-mechanic", Name: "Mechanic", DisplayName: "Mechanic (Automobile)", BaseName: "Mechanic", Specialization: "Automobile"},
+	)
+	globalAILibraryCatalogCache.signature = signature
+
+	vocabulary := GetThematicVocabulary("mechanic", []string{"garage", "crafty", "overconfident"})
+	checks := []string{
+		"Thematic Canonical GURPS Vocabulary:",
+		"Skills: Mechanic (Automobile)",
+		"Advantages: Signature Gear",
+		"Perks: Craftiness",
+		"Disadvantages: Overconfidence",
+		"Quirks: Keeps tools immaculate",
+	}
+	for _, check := range checks {
+		if !strings.Contains(vocabulary, check) {
+			t.Fatalf("expected thematic vocabulary to contain %q, got %q", check, vocabulary)
+		}
 	}
 }
 

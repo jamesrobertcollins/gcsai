@@ -116,6 +116,34 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Perk\"\u001fnotes=\"Enhanced Knockback (Groucho)\"\u001fdescription=\"Attacks made with Groucho do double knockback.\"\u001fpoints=\"1\"\u001fcandidates=[t8uL_QV0W_ysFJZm4:@Type@ Rank, tCJWkPtHhPrJjCtnv:Permit, tC8gw02YEB4JLCkb-:Permit, t4UuIP_WKQdTcz4FC:Pet, t3qytj5PflAhy0bD7:Super Luck]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6714258Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Perk\"",
+        "notes=\"Enhanced Knockback (Groucho)\"",
+        "description=\"Attacks made with Groucho do double knockback.\"",
+        "points=\"1\"",
+        "candidates=[t8uL_QV0W_ysFJZm4:@Type@ Rank, tCJWkPtHhPrJjCtnv:Permit, tC8gw02YEB4JLCkb-:Permit, t4UuIP_WKQdTcz4FC:Pet, t3qytj5PflAhy0bD7:Super Luck]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Perk\"\u001fnotes=\"Sentient Weapon (Groucho)\"\u001fdescription=\"The hammer Groucho can talk to the wielder, but only the person holding it can hear him. Enchanted with a soul of unknown origin (human, deadite, demon, or other).\"\u001fpoints=\"1\"\u001fcandidates=[t8uL_QV0W_ysFJZm4:@Type@ Rank, tCJWkPtHhPrJjCtnv:Permit, tC8gw02YEB4JLCkb-:Permit, t4UuIP_WKQdTcz4FC:Pet, t3qytj5PflAhy0bD7:Super Luck]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6649262Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Perk\"",
+        "notes=\"Sentient Weapon (Groucho)\"",
+        "description=\"The hammer Groucho can talk to the wielder, but only the person holding it can hear him. Enchanted with a soul of unknown origin (human, deadite, demon, or other).\"",
+        "points=\"1\"",
+        "candidates=[t8uL_QV0W_ysFJZm4:@Type@ Rank, tCJWkPtHhPrJjCtnv:Permit, tC8gw02YEB4JLCkb-:Permit, t4UuIP_WKQdTcz4FC:Pet, t3qytj5PflAhy0bD7:Super Luck]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"'67 Chevy Impala\"\u001fdescription=\"A classic 1967 Chevy Impala, heavily customized with armor plating, especially around the engine bay to protect it from deadite attacks.\"\u001fpoints=\"5\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
       "kind": "unresolved",
       "count": 1,
@@ -126,6 +154,33 @@
         "notes=\"'67 Chevy Impala\"",
         "description=\"A classic 1967 Chevy Impala, heavily customized with armor plating, especially around the engine bay to protect it from deadite attacks.\"",
         "points=\"5\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Armored '67 Chevy Impala\"\u001fdescription=\"Armor plating especially around the engine bay.\"\u001fpoints=\"3\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6467737Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"Armored '67 Chevy Impala\"",
+        "description=\"Armor plating especially around the engine bay.\"",
+        "points=\"3\"",
+        "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=advantages\u001finput=\"Signature Gear\"\u001fnotes=\"Groucho the Magic Hammer\"\u001fpoints=\"1\"\u001fcandidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6544255Z",
+      "fields": [
+        "category=advantages",
+        "input=\"Signature Gear\"",
+        "notes=\"Groucho the Magic Hammer\"",
+        "points=\"1\"",
         "candidates=[teOnT4moKIMG7fTBH:Signature Gear, thKwCUUe961nSwzVi:Signature Gear, tzRPLJ-uYrNCag55y:Snatcher, ti8Mwn5KC8w-uyGTH:Social Regard, tZeIlIvK09VMCRlF5:Social Regard]"
       ]
     },
@@ -150,6 +205,18 @@
         "category=quirks",
         "input=\"Always carries a knife\"",
         "candidates=[tBuR7D-WxEXLkinAD:Clean freak, t82n8_eFe91c5EBtA:Low-Pressure Intolerance, t90_VroM128_RSckF:Aches and Pains, tEt35oNyt6mqHi_k9:Alcohol Intolerance, ttfiwYcfOLKecMEjX:Cooperative]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Argues out loud with his hammer\"\u001fpoints=\"-1\"\u001fcandidates=[txvZHtPk5HGFTX5ze:Likes to hang around with wizards, tzm_FlN-4Wc1JUKjq:Fashion Disaster, tCtFPKOcm08pUJlO_:Personality Change, tjO5ifw_vxoFJGxGW:Personality Change, tB8R_Q7D35GN4zda4:Restless Sleeper]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6759248Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Argues out loud with his hammer\"",
+        "points=\"-1\"",
+        "candidates=[txvZHtPk5HGFTX5ze:Likes to hang around with wizards, tzm_FlN-4Wc1JUKjq:Fashion Disaster, tCtFPKOcm08pUJlO_:Personality Change, tjO5ifw_vxoFJGxGW:Personality Change, tB8R_Q7D35GN4zda4:Restless Sleeper]"
       ]
     },
     {
@@ -187,6 +254,18 @@
       ]
     },
     {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Overly protective of his '67 Chevy Impala\"\u001fpoints=\"-1\"\u001fcandidates=[tSqGPxxJko47Sttoc:Overcautious Habit, tuWexgW757jM4_zMQ:Overspecialization, tuv_jLO9haDIXQ3i3:Tests Positive for @Condition@, tF_jzafw5o8ISW9DR:Perfectionist, th6ndN_gjCU9ItioE:Positive Secret]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6819263Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Overly protective of his '67 Chevy Impala\"",
+        "points=\"-1\"",
+        "candidates=[tSqGPxxJko47Sttoc:Overcautious Habit, tuWexgW757jM4_zMQ:Overspecialization, tuv_jLO9haDIXQ3i3:Tests Positive for @Condition@, tF_jzafw5o8ISW9DR:Perfectionist, th6ndN_gjCU9ItioE:Positive Secret]"
+      ]
+    },
+    {
       "signature": "unresolved\u001fcategory=quirks\u001finput=\"Protects his car fiercely\"\u001fcandidates=[th18aqbx_qw7aVCzx:Delusional Competence, tJDtMWc6-ndKql9uN:External Mood Influence, tsq0t49UsGgac4xY7:Heat Intolerance, tNP4oSMa9Uia04pwh:Photosensitivity, th6ndN_gjCU9ItioE:Positive Secret]",
       "kind": "unresolved",
       "count": 1,
@@ -195,6 +274,18 @@
         "category=quirks",
         "input=\"Protects his car fiercely\"",
         "candidates=[th18aqbx_qw7aVCzx:Delusional Competence, tJDtMWc6-ndKql9uN:External Mood Influence, tsq0t49UsGgac4xY7:Heat Intolerance, tNP4oSMa9Uia04pwh:Photosensitivity, th6ndN_gjCU9ItioE:Positive Secret]"
+      ]
+    },
+    {
+      "signature": "unresolved\u001fcategory=quirks\u001finput=\"Spouts cheesy one-liners during combat\"\u001fpoints=\"-1\"\u001fcandidates=[tGU6pQdbTEtWypJx7:Speech Mannerism, t3x7fIpl1_YM3KG1l:Inaccessible Idioms, t1tL3wEnvLeJtdijv:Low-Frequency Hearing Loss, t82n8_eFe91c5EBtA:Low-Pressure Intolerance, tvwO747xb6rVukcOt:Odious Personal Habit]",
+      "kind": "unresolved",
+      "count": 1,
+      "last_seen": "2026-04-04T22:18:05.6784253Z",
+      "fields": [
+        "category=quirks",
+        "input=\"Spouts cheesy one-liners during combat\"",
+        "points=\"-1\"",
+        "candidates=[tGU6pQdbTEtWypJx7:Speech Mannerism, t3x7fIpl1_YM3KG1l:Inaccessible Idioms, t1tL3wEnvLeJtdijv:Low-Frequency Hearing Loss, t82n8_eFe91c5EBtA:Low-Pressure Intolerance, tvwO747xb6rVukcOt:Odious Personal Habit]"
       ]
     },
     {

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/richardwilkes/gcs/v5/model/fxp"
 	"github.com/richardwilkes/gcs/v5/model/gurps"
 	"github.com/richardwilkes/gcs/v5/model/nameable"
 	"github.com/richardwilkes/toolbox/v2/tid"
@@ -105,6 +106,7 @@ type aiLibraryCatalogEntry struct {
 	DisplayName    string
 	BaseName       string
 	Specialization string
+	PointCost      int
 	SourcePath     string
 	LibraryFile    gurps.LibraryFile
 	Nameables      []string
@@ -717,6 +719,133 @@ func (c *aiLibraryCatalog) recommendedTermsForConcept(concept string, limits map
 	return strings.TrimSpace(builder.String())
 }
 
+func aiDistinctCatalogDisplayNames(entries []*aiLibraryCatalogEntry) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		name := strings.TrimSpace(entry.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(entry.Name)
+		}
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func aiSplitAdvantageAndPerkEntries(entries []*aiLibraryCatalogEntry) (advantages, perks []*aiLibraryCatalogEntry) {
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.PointCost == 1 {
+			perks = append(perks, entry)
+			continue
+		}
+		advantages = append(advantages, entry)
+	}
+	return advantages, perks
+}
+
+func aiFilterThematicVocabularySections(vocabulary string, labels ...string) string {
+	vocabulary = strings.TrimSpace(vocabulary)
+	if vocabulary == "" || len(labels) == 0 {
+		return ""
+	}
+	allowed := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label != "" {
+			allowed[label] = struct{}{}
+		}
+	}
+	lines := strings.Split(vocabulary, "\n")
+	filtered := []string{"Thematic Canonical GURPS Vocabulary:"}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		parts := strings.SplitN(body, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		label := strings.TrimSpace(parts[0])
+		if _, ok := allowed[label]; !ok {
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 1 {
+		return ""
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func aiBuildThematicVocabularyQuery(concept string, themes []string) string {
+	parts := make([]string, 0, len(themes)+1)
+	if text := strings.TrimSpace(concept); text != "" {
+		parts = append(parts, text)
+	}
+	for _, theme := range themes {
+		if text := strings.TrimSpace(theme); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func GetThematicVocabulary(concept string, themes []string) string {
+	catalog, err := aiLibraryCatalogFromSettings()
+	if err != nil || catalog == nil {
+		return ""
+	}
+	query := aiBuildThematicVocabularyQuery(concept, themes)
+	results := catalog.searchConceptEntries(query, map[aiLibraryCategory]int{
+		aiLibraryCategorySkill:        12,
+		aiLibraryCategoryAdvantage:    14,
+		aiLibraryCategoryDisadvantage: 10,
+		aiLibraryCategoryQuirk:        6,
+	})
+	advantages, perks := aiSplitAdvantageAndPerkEntries(results[aiLibraryCategoryAdvantage])
+	sections := []struct {
+		label string
+		names []string
+	}{
+		{label: "Skills", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategorySkill])},
+		{label: "Advantages", names: aiDistinctCatalogDisplayNames(advantages)},
+		{label: "Perks", names: aiDistinctCatalogDisplayNames(perks)},
+		{label: "Disadvantages", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategoryDisadvantage])},
+		{label: "Quirks", names: aiDistinctCatalogDisplayNames(results[aiLibraryCategoryQuirk])},
+	}
+	var builder strings.Builder
+	builder.WriteString("Thematic Canonical GURPS Vocabulary:\n")
+	for _, section := range sections {
+		if len(section.names) == 0 {
+			continue
+		}
+		builder.WriteString("- ")
+		builder.WriteString(section.label)
+		builder.WriteString(": ")
+		builder.WriteString(strings.Join(section.names, ", "))
+		builder.WriteByte('\n')
+	}
+	return strings.TrimSpace(builder.String())
+}
+
 func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibraryCatalog, error) {
 	if libraries == nil {
 		return nil, fmt.Errorf("no libraries loaded")
@@ -758,6 +887,7 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 					DisplayName:    aiCatalogEntryDisplayName(skill.Name, skill.Specialization),
 					BaseName:       aiLookupBaseName(skill.Name),
 					Specialization: strings.TrimSpace(skill.Specialization),
+					PointCost:      0,
 					SourcePath:     ref.FilePath,
 					LibraryFile:    libraryFileForSet(set.Name, ref.FilePath),
 					Nameables:      aiSortedNameableKeys(keys),
@@ -792,6 +922,7 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 					DisplayName:    strings.TrimSpace(traitBaseNameForLookup(trait.Name)),
 					BaseName:       strings.TrimSpace(traitBaseNameForLookup(trait.Name)),
 					Specialization: "",
+					PointCost:      fxp.AsInteger[int](points),
 					SourcePath:     ref.FilePath,
 					LibraryFile:    libraryFileForSet(set.Name, ref.FilePath),
 					Nameables:      aiSortedNameableKeys(keys),
@@ -819,6 +950,7 @@ func buildAILibraryCatalog(libraries gurps.Libraries, signature string) (*aiLibr
 					DisplayName:    strings.TrimSpace(traitBaseNameForLookup(equipment.Name)),
 					BaseName:       strings.TrimSpace(traitBaseNameForLookup(equipment.Name)),
 					Specialization: "",
+					PointCost:      0,
 					SourcePath:     ref.FilePath,
 					LibraryFile:    libraryFileForSet(set.Name, ref.FilePath),
 					Nameables:      aiSortedNameableKeys(keys),
@@ -861,12 +993,16 @@ func (c *aiLibraryCatalog) addEntry(entry *aiLibraryCatalogEntry) {
 	c.byID[entry.Category][entry.ID] = entry
 }
 
-func (d *aiChatDockable) aiLibraryCatalog() (*aiLibraryCatalog, error) {
+func aiLibraryCatalogFromSettings() (*aiLibraryCatalog, error) {
 	libraries := gurps.GlobalSettings().Libraries()
 	signature := aiLibraryCatalogSignature(libraries)
 	return globalAILibraryCatalogCache.catalogFor(signature, func() (*aiLibraryCatalog, error) {
 		return buildAILibraryCatalog(libraries, signature)
 	})
+}
+
+func (d *aiChatDockable) aiLibraryCatalog() (*aiLibraryCatalog, error) {
+	return aiLibraryCatalogFromSettings()
 }
 
 func (c *aiLibraryCatalog) resolveAIActionPlan(plan aiActionPlan) (aiActionPlan, []aiRetryItem, []string) {

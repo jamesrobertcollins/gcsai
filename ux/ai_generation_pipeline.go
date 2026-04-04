@@ -1,6 +1,7 @@
 package ux
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -49,6 +50,346 @@ type aiLocalGenerationPhaseApplyResult struct {
 	Summary     string
 	Warnings    []string
 	Err         error
+}
+
+type GenerationBudget struct {
+	TotalCP          int
+	Attributes       int
+	Advantages       int
+	CoreSkills       int
+	BackgroundSkills int
+}
+
+type aiBlueprintBudgetPercentages struct {
+	Attributes       aiFlexibleInt `json:"attributes,omitempty"`
+	Advantages       aiFlexibleInt `json:"advantages,omitempty"`
+	CoreSkills       aiFlexibleInt `json:"core_skills,omitempty"`
+	BackgroundSkills aiFlexibleInt `json:"background_skills,omitempty"`
+}
+
+type aiGenerationBlueprintResponse struct {
+	Themes            []string                     `json:"themes,omitempty"`
+	BudgetPercentages aiBlueprintBudgetPercentages `json:"budget_percentages,omitempty"`
+	Budget            aiBlueprintBudgetPercentages `json:"budget,omitempty"`
+}
+
+func (b GenerationBudget) SkillPoints() int {
+	return b.CoreSkills + b.BackgroundSkills
+}
+
+func (b GenerationBudget) Summary() string {
+	return fmt.Sprintf("Attributes %d CP, Advantages %d CP, Core Skills %d CP, Background Skills %d CP", b.Attributes, b.Advantages, b.CoreSkills, b.BackgroundSkills)
+}
+
+func (b *GenerationBudget) AddDisadvantageBonus(bonus int) {
+	if b == nil || bonus <= 0 {
+		return
+	}
+	advantageBonus := bonus / 2
+	skillBonus := bonus - advantageBonus
+	b.Advantages += advantageBonus
+	b.addSkillBonus(skillBonus)
+}
+
+func (b *GenerationBudget) addSkillBonus(skillBonus int) {
+	if b == nil || skillBonus <= 0 {
+		return
+	}
+	totalSkills := b.CoreSkills + b.BackgroundSkills
+	if totalSkills <= 0 {
+		b.CoreSkills += skillBonus
+		return
+	}
+	allocations := aiAllocateWeightedBudget(skillBonus, []int{b.CoreSkills, b.BackgroundSkills})
+	coreBonus := allocations[0]
+	backgroundBonus := allocations[1]
+	b.CoreSkills += coreBonus
+	b.BackgroundSkills += backgroundBonus
+}
+
+func aiNormalizeBlueprintThemes(themes []string, concept string) []string {
+	normalized := make([]string, 0, 3)
+	seen := make(map[string]struct{}, 3)
+	add := func(theme string) {
+		theme = strings.TrimSpace(theme)
+		if theme == "" {
+			return
+		}
+		key := strings.ToLower(theme)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, theme)
+	}
+	for _, theme := range themes {
+		add(theme)
+		if len(normalized) == 3 {
+			return normalized
+		}
+	}
+	for _, token := range aiConceptSearchTokens(concept) {
+		add(token)
+		if len(normalized) == 3 {
+			return normalized
+		}
+	}
+	return normalized
+}
+
+func aiDefaultGenerationBudget(totalCP int) GenerationBudget {
+	allocations := aiAllocateWeightedBudget(totalCP, []int{40, 20, 25, 15})
+	return GenerationBudget{
+		TotalCP:          totalCP,
+		Attributes:       allocations[0],
+		Advantages:       allocations[1],
+		CoreSkills:       allocations[2],
+		BackgroundSkills: allocations[3],
+	}
+}
+
+func aiAllocateWeightedBudget(total int, weights []int) []int {
+	allocations := make([]int, len(weights))
+	if total <= 0 || len(weights) == 0 {
+		return allocations
+	}
+	sanitized := make([]int, len(weights))
+	weightSum := 0
+	for i, weight := range weights {
+		if weight < 0 {
+			weight = 0
+		}
+		sanitized[i] = weight
+		weightSum += weight
+	}
+	if weightSum <= 0 {
+		return aiAllocateWeightedBudget(total, []int{40, 20, 25, 15})
+	}
+	type remainderEntry struct {
+		Index     int
+		Remainder int
+		Weight    int
+	}
+	remainders := make([]remainderEntry, 0, len(sanitized))
+	allocated := 0
+	for i, weight := range sanitized {
+		product := total * weight
+		allocations[i] = product / weightSum
+		allocated += allocations[i]
+		remainders = append(remainders, remainderEntry{Index: i, Remainder: product % weightSum, Weight: weight})
+	}
+	remaining := total - allocated
+	sort.Slice(remainders, func(i, j int) bool {
+		if remainders[i].Remainder != remainders[j].Remainder {
+			return remainders[i].Remainder > remainders[j].Remainder
+		}
+		if remainders[i].Weight != remainders[j].Weight {
+			return remainders[i].Weight > remainders[j].Weight
+		}
+		return remainders[i].Index < remainders[j].Index
+	})
+	for i := 0; i < remaining && i < len(remainders); i++ {
+		allocations[remainders[i].Index]++
+	}
+	return allocations
+}
+
+func aiGenerationBudgetFromPercentages(totalCP int, percentages aiBlueprintBudgetPercentages) GenerationBudget {
+	weights := []int{
+		max(0, percentages.Attributes.Int()),
+		max(0, percentages.Advantages.Int()),
+		max(0, percentages.CoreSkills.Int()),
+		max(0, percentages.BackgroundSkills.Int()),
+	}
+	weightSum := 0
+	for _, weight := range weights {
+		weightSum += weight
+	}
+	if weightSum <= 0 {
+		return aiDefaultGenerationBudget(totalCP)
+	}
+	allocations := aiAllocateWeightedBudget(totalCP, weights)
+	return GenerationBudget{
+		TotalCP:          totalCP,
+		Attributes:       allocations[0],
+		Advantages:       allocations[1],
+		CoreSkills:       allocations[2],
+		BackgroundSkills: allocations[3],
+	}
+}
+
+func aiParseGenerationBlueprintResponse(responseText string, totalCP int, concept string) ([]string, GenerationBudget, error) {
+	for _, payload := range extractJSONPayloads(responseText) {
+		cleaned := sanitizeAIJSONPayload(payload)
+		if cleaned == "" {
+			continue
+		}
+		var response aiGenerationBlueprintResponse
+		if err := json.Unmarshal([]byte(cleaned), &response); err != nil {
+			continue
+		}
+		budget := response.BudgetPercentages
+		if budget.Attributes.Int() == 0 && budget.Advantages.Int() == 0 && budget.CoreSkills.Int() == 0 && budget.BackgroundSkills.Int() == 0 {
+			budget = response.Budget
+		}
+		themes := aiNormalizeBlueprintThemes(response.Themes, concept)
+		if len(themes) < 3 {
+			continue
+		}
+		return themes[:3], aiGenerationBudgetFromPercentages(totalCP, budget), nil
+	}
+	return nil, GenerationBudget{}, fmt.Errorf("Step 1 blueprint did not return parseable JSON with 3 themes and budget percentages")
+}
+
+func aiGenerationBlueprintJSONSchema() any {
+	integerField := map[string]any{"type": "integer", "minimum": 0, "maximum": 100}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"themes", "budget_percentages"},
+		"properties": map[string]any{
+			"themes": map[string]any{
+				"type":        "array",
+				"minItems":    3,
+				"maxItems":    3,
+				"items":       map[string]any{"type": "string"},
+				"uniqueItems": true,
+			},
+			"budget_percentages": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"attributes", "advantages", "core_skills", "background_skills"},
+				"properties": map[string]any{
+					"attributes":        integerField,
+					"advantages":        integerField,
+					"core_skills":       integerField,
+					"background_skills": integerField,
+				},
+			},
+		},
+	}
+}
+
+func aiDisadvantagesQuirksOnlyActionPlan(plan aiActionPlan) aiActionPlan {
+	return aiActionPlan{
+		Disadvantages: append([]aiNamedAction(nil), plan.Disadvantages...),
+		Quirks:        append([]aiNamedAction(nil), plan.Quirks...),
+	}
+}
+
+func aiAttributesOnlyActionPlan(plan aiActionPlan) aiActionPlan {
+	return aiActionPlan{Attributes: append([]aiAttributeAction(nil), plan.Attributes...)}
+}
+
+func aiBuildLocalBlueprintPrompts(originalPrompt string, params aiCharacterRequestParams) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e character-planning function.
+Return exactly one top-level JSON object and nothing else.
+Do NOT generate a character sheet, traits, skills, equipment, or attributes.
+Infer exactly 3 core background themes from the approved character concept.
+Then assign a strict integer percentage budget across these four buckets only:
+- attributes
+- advantages
+- core_skills
+- background_skills
+The four percentages must sum to 100.
+Use this exact JSON shape:
+{"themes":["theme 1","theme 2","theme 3"],"budget_percentages":{"attributes":0,"advantages":0,"core_skills":0,"background_skills":0}}`)
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Approved character concept: %s
+Target total budget: exactly %d CP.
+Approved baseline data:
+%s
+
+Generate the Step 1 blueprint now.`, params.Concept, params.TotalCP, originalPrompt))
+	return systemPrompt, userPrompt
+}
+
+func aiBuildLocalStoryEnginePrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, vocabulary string) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e disadvantage and quirk generator.
+Return exactly one top-level JSON object and nothing else.
+You may output ONLY these JSON fields:
+- disadvantages
+- quirks
+Do not include attributes, advantages, skills, equipment, profile, or spend_all_cp.
+Use canonical GURPS Fourth Edition names.
+Use only concept-fitting disadvantages and quirks. Do not pad the list.
+Quirks may range from 0 to 5 entries depending on the concept and themes.
+Stay within the campaign disadvantage limit supplied by the user prompt.`)
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 2: Story Engine.
+Approved character concept: %s
+Core themes: %s
+Campaign disadvantage limit: up to %d points in disadvantages.
+Approved baseline data:
+%s
+
+Use ONLY the concept and themes above to propose disadvantages and quirks.
+Dynamic quirk count: 0 to 5, whichever best fits the concept.
+Prefer canonical names from this targeted vocabulary when they fit:
+%s
+
+Return exactly one JSON object with disadvantages and quirks only.`, params.Concept, strings.Join(themes, ", "), params.DisadvantageLimit, originalPrompt, strings.TrimSpace(vocabulary)))
+	return systemPrompt, userPrompt
+}
+
+func aiBuildLocalAttributePrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, attributeBucket int, summary string) (systemPrompt, userPrompt string) {
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e attribute generator.
+Return exactly one top-level JSON object and nothing else.
+You may output ONLY the "attributes" field.
+Generate attribute and secondary-characteristic adjustments that fit the approved concept.
+Do not include advantages, disadvantages, quirks, skills, equipment, profile, or spend_all_cp.
+Stay within the attribute bucket supplied by the user prompt.
+
+Current character sheet context:
+%s`, summary))
+	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 3: Attributes.
+Approved character concept: %s
+Core themes: %s
+Attribute bucket: do not exceed %d CP.
+Approved baseline data:
+%s
+
+Generate attributes and secondary characteristics only, without exceeding the attribute bucket.
+Return exactly one JSON object with attributes only.`, params.Concept, strings.Join(themes, ", "), attributeBucket, originalPrompt))
+	return systemPrompt, userPrompt
+}
+
+func (d *aiChatDockable) localGenerationPointsBreakdown() (gurps.PointsBreakdown, error) {
+	resultCh := make(chan struct {
+		breakdown gurps.PointsBreakdown
+		err       error
+	}, 1)
+	unison.InvokeTask(func() {
+		sheet := d.sheetOrCreateNew()
+		if sheet == nil || sheet.entity == nil {
+			resultCh <- struct {
+				breakdown gurps.PointsBreakdown
+				err       error
+			}{err: fmt.Errorf("no active sheet to apply changes to")}
+			return
+		}
+		resultCh <- struct {
+			breakdown gurps.PointsBreakdown
+			err       error
+		}{breakdown: *sheet.entity.PointsBreakdown()}
+	})
+	result := <-resultCh
+	return result.breakdown, result.err
+}
+
+func aiDisadvantageBonusFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
+	delta := (after.Disadvantages + after.Quirks) - (before.Disadvantages + before.Quirks)
+	bonus := -fxp.AsInteger[int](delta)
+	if bonus < 0 {
+		return 0
+	}
+	return bonus
+}
+
+func aiAttributeSpendFromPointBreakdowns(before, after gurps.PointsBreakdown) int {
+	spent := fxp.AsInteger[int](after.Attributes - before.Attributes)
+	if spent < 0 {
+		return 0
+	}
+	return spent
 }
 
 func aiResolvedActionPlanCount(plan aiActionPlan) int {
@@ -424,11 +765,9 @@ func (d *aiChatDockable) autoBalanceLocalGeneration(targetCP int) (before, after
 	return result.before, result.after, result.err
 }
 
-func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
+func (d *aiChatDockable) executeLocalGenerationPipeline(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
 	targetCP := params.TotalCP
-	phase1Label := i18n.Text("Phase 1: Core Chassis")
-	phase2Label := i18n.Text("Phase 2: Professional Package")
-	phase1Summary, err := d.prepareLocalGenerationTarget(targetCP)
+	_, err := d.prepareLocalGenerationTarget(targetCP)
 	if err != nil {
 		unison.InvokeTask(func() {
 			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI build could not be started: %v"), err))
@@ -436,109 +775,141 @@ func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, origi
 		return
 	}
 
-	phase1RecommendedTerms := d.recommendedTermsForLocalPhase(params.Concept, aiPhase1RecommendedTermLimits)
-	phase1SystemPrompt, phase1UserPrompt := aiBuildLocalPhase1Prompts(originalPrompt, params, phase1Summary, phase1RecommendedTerms)
-	writeSystemPromptDebugFile(phase1SystemPrompt)
-	phase1Response, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(phase1SystemPrompt, phase1UserPrompt), aiActionPlanJSONSchema())
+	blueprintLabel := i18n.Text("Step 1: Blueprint")
+	blueprintSystemPrompt, blueprintUserPrompt := aiBuildLocalBlueprintPrompts(originalPrompt, params)
+	writeSystemPromptDebugFile(blueprintSystemPrompt)
+	blueprintResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(blueprintSystemPrompt, blueprintUserPrompt), aiGenerationBlueprintJSONSchema())
 	if err != nil {
 		unison.InvokeTask(func() {
 			d.addMessage("AI", err.Error())
 		})
 		return
 	}
-	phase1Resolution, err := d.resolveFilteredAIResponseText(phase1Response, aiPhase1OnlyActionPlan)
+	themes, budget, err := aiParseGenerationBlueprintResponse(blueprintResponse, targetCP, params.Concept)
 	if err != nil {
 		unison.InvokeTask(func() {
-			d.addMessage("AI", phase1Response)
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 1 could not be resolved: %v"), err))
-		})
-		return
-	}
-	phase1Resolution, err = d.executeLocalCorrectionLoop(endpoint, model, phase1SystemPrompt, phase1Label, phase1Resolution, aiPhase1OnlyActionPlan)
-	if err != nil {
-		unison.InvokeTask(func() {
-			d.addMessage("AI", aiLocalPhaseMessage(phase1Label, phase1Response))
-			for _, warning := range phase1Resolution.Warnings {
-				d.addMessage("AI", warning)
-			}
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 1 could not continue: %v"), err))
-		})
-		return
-	}
-	phase1Apply := d.applyLocalGenerationPhase(phase1Label, phase1Response, phase1Resolution, targetCP)
-	if phase1Apply.Err != nil {
-		unison.InvokeTask(func() {
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 1 could not be applied: %v"), phase1Apply.Err))
-		})
-		return
-	}
-
-	remainingCP := phase1Apply.RemainingCP
-	if remainingCP > 0 {
-		phase2RecommendedTerms := d.recommendedTermsForLocalPhase(params.Concept, aiPhase2RecommendedTermLimits)
-		phase2SystemPrompt, phase2UserPrompt := aiBuildLocalPhase2Prompts(originalPrompt, params, remainingCP, phase1Apply.Summary, phase2RecommendedTerms)
-		writeSystemPromptDebugFile(phase2SystemPrompt)
-		phase2Response, phase2Err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(phase2SystemPrompt, phase2UserPrompt), aiActionPlanJSONSchema())
-		if phase2Err != nil {
-			unison.InvokeTask(func() {
-				d.addMessage("AI", phase2Err.Error())
-			})
-			return
-		}
-		phase2Resolution, resolveErr := d.resolveFilteredAIResponseText(phase2Response, func(plan aiActionPlan) aiActionPlan {
-			return aiSnapSkillPointsInPlan(aiPhase2OnlyActionPlan(plan))
-		})
-		if resolveErr != nil {
-			unison.InvokeTask(func() {
-				d.addMessage("AI", phase2Response)
-				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 2 could not be resolved: %v"), resolveErr))
-			})
-			return
-		}
-		phase2Resolution, resolveErr = d.executeLocalCorrectionLoop(endpoint, model, phase2SystemPrompt, phase2Label, phase2Resolution, func(plan aiActionPlan) aiActionPlan {
-			return aiSnapSkillPointsInPlan(aiPhase2OnlyActionPlan(plan))
-		})
-		if resolveErr != nil {
-			unison.InvokeTask(func() {
-				d.addMessage("AI", aiLocalPhaseMessage(phase2Label, phase2Response))
-				for _, warning := range phase2Resolution.Warnings {
-					d.addMessage("AI", warning)
-				}
-				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 2 could not continue: %v"), resolveErr))
-			})
-			return
-		}
-		phase2Apply := d.applyLocalGenerationPhase(phase2Label, phase2Response, phase2Resolution, targetCP)
-		if phase2Apply.Err != nil {
-			unison.InvokeTask(func() {
-				d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 2 could not be applied: %v"), phase2Apply.Err))
-			})
-			return
-		}
-		remainingCP = phase2Apply.RemainingCP
-	}
-
-	beforeBalance, afterBalance, balanceErr := d.autoBalanceLocalGeneration(targetCP)
-	if balanceErr != nil {
-		unison.InvokeTask(func() {
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Phase 3 could not be applied: %v"), balanceErr))
+			d.addMessage("AI", aiLocalPhaseMessage(blueprintLabel, blueprintResponse))
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI blueprint could not be resolved: %v"), err))
 		})
 		return
 	}
 	unison.InvokeTask(func() {
-		if beforeBalance > 0 && afterBalance == 0 {
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("Phase 3: Auto-Balancer spent the remaining %d CP and finished at exactly 0 unspent."), beforeBalance))
-		} else if afterBalance == 0 {
-			d.addMessage("AI", i18n.Text("Phase 3: Auto-Balancer confirmed the build is already at exactly 0 unspent CP."))
-		} else if afterBalance > 0 {
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("Phase 3: Auto-Balancer reduced the remainder from %d CP to %d CP, but could not reach exactly 0."), beforeBalance, afterBalance))
-		} else {
-			d.addMessage("AI", fmt.Sprintf(i18n.Text("Phase 3: build is overspent by %d CP after deterministic balancing."), -afterBalance))
-		}
-		if afterBalance == 0 {
-			d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
-		}
+		d.addMessage("AI", aiLocalPhaseMessage(blueprintLabel, blueprintResponse))
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("Blueprint themes: %s."), strings.Join(themes, ", ")))
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("Blueprint budget: %s."), budget.Summary()))
 	})
+
+	thematicVocabulary := GetThematicVocabulary(params.Concept, themes)
+	storyVocabulary := aiFilterThematicVocabularySections(thematicVocabulary, "Disadvantages", "Quirks")
+
+	beforeStoryBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 2 could not start: %v"), err))
+		})
+		return
+	}
+	storyLabel := i18n.Text("Step 2: Story Engine")
+	storySystemPrompt, storyUserPrompt := aiBuildLocalStoryEnginePrompts(originalPrompt, params, themes, storyVocabulary)
+	writeSystemPromptDebugFile(storySystemPrompt)
+	storyResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(storySystemPrompt, storyUserPrompt), aiActionPlanJSONSchema())
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", err.Error())
+		})
+		return
+	}
+	storyResolution, err := d.resolveFilteredAIResponseText(storyResponse, aiDisadvantagesQuirksOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", storyResponse)
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 2 could not be resolved: %v"), err))
+		})
+		return
+	}
+	storyResolution, err = d.executeLocalCorrectionLoop(endpoint, model, storySystemPrompt, storyLabel, storyResolution, aiDisadvantagesQuirksOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", aiLocalPhaseMessage(storyLabel, storyResponse))
+			for _, warning := range storyResolution.Warnings {
+				d.addMessage("AI", warning)
+			}
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 2 could not continue: %v"), err))
+		})
+		return
+	}
+	storyApply := d.applyLocalGenerationPhase(storyLabel, storyResponse, storyResolution, targetCP)
+	if storyApply.Err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 2 could not be applied: %v"), storyApply.Err))
+		})
+		return
+	}
+	afterStoryBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 2 budget update could not be calculated: %v"), err))
+		})
+		return
+	}
+	bonusCP := aiDisadvantageBonusFromPointBreakdowns(beforeStoryBreakdown, afterStoryBreakdown)
+	budget.AddDisadvantageBonus(bonusCP)
+	unison.InvokeTask(func() {
+		d.addMessage("AI", fmt.Sprintf(i18n.Text("Story Engine generated %d bonus CP from disadvantages and quirks. Updated budget: %s."), bonusCP, budget.Summary()))
+	})
+
+	beforeAttributeBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 3 could not start: %v"), err))
+		})
+		return
+	}
+	attributeLabel := i18n.Text("Step 3: Attributes")
+	attributeSystemPrompt, attributeUserPrompt := aiBuildLocalAttributePrompts(originalPrompt, params, themes, budget.Attributes, storyApply.Summary)
+	writeSystemPromptDebugFile(attributeSystemPrompt)
+	attributeResponse, err := d.queryLocalModel(endpoint, model, buildLocalStatelessMessages(attributeSystemPrompt, attributeUserPrompt), aiActionPlanJSONSchema())
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", err.Error())
+		})
+		return
+	}
+	attributeResolution, err := d.resolveFilteredAIResponseText(attributeResponse, aiAttributesOnlyActionPlan)
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", attributeResponse)
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 3 could not be resolved: %v"), err))
+		})
+		return
+	}
+	attributeApply := d.applyLocalGenerationPhase(attributeLabel, attributeResponse, attributeResolution, targetCP)
+	if attributeApply.Err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 3 could not be applied: %v"), attributeApply.Err))
+		})
+		return
+	}
+	afterAttributeBreakdown, err := d.localGenerationPointsBreakdown()
+	if err != nil {
+		unison.InvokeTask(func() {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI Step 3 budget check could not be calculated: %v"), err))
+		})
+		return
+	}
+	attributeSpend := aiAttributeSpendFromPointBreakdowns(beforeAttributeBreakdown, afterAttributeBreakdown)
+	unison.InvokeTask(func() {
+		if attributeSpend > budget.Attributes {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: Step 3 spent %d CP on attributes, exceeding the %d CP attribute bucket."), attributeSpend, budget.Attributes))
+		} else {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Step 3 spent %d CP from the %d CP attribute bucket."), attributeSpend, budget.Attributes))
+		}
+		d.addMessage("AI", i18n.Text("Local generation pipeline paused after Step 3. Later redesigned stages are not implemented yet."))
+	})
+}
+
+func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
+	d.executeLocalGenerationPipeline(endpoint, model, originalPrompt, params)
 }
 
 func AutoBalanceUnspentPoints(entity *gurps.Entity, targetCP int) {

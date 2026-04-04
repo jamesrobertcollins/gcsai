@@ -85,6 +85,63 @@ func TestAIPhase1OnlyActionPlanPreservesProfile(t *testing.T) {
 	}
 }
 
+func TestAIGenerationBudgetFromPercentagesAllocatesExactCP(t *testing.T) {
+	budget := aiGenerationBudgetFromPercentages(150, aiBlueprintBudgetPercentages{
+		Attributes:       aiFlexibleInt(40),
+		Advantages:       aiFlexibleInt(20),
+		CoreSkills:       aiFlexibleInt(25),
+		BackgroundSkills: aiFlexibleInt(15),
+	})
+	if budget.TotalCP != 150 {
+		t.Fatalf("expected total cp 150, got %d", budget.TotalCP)
+	}
+	if budget.Attributes != 60 || budget.Advantages != 30 || budget.CoreSkills != 38 || budget.BackgroundSkills != 22 {
+		t.Fatalf("unexpected budget allocation: %#v", budget)
+	}
+	if got := budget.Attributes + budget.Advantages + budget.CoreSkills + budget.BackgroundSkills; got != 150 {
+		t.Fatalf("expected exact CP allocation, got %d", got)
+	}
+}
+
+func TestGenerationBudgetAddDisadvantageBonusSplitsAcrossAdvantagesAndSkills(t *testing.T) {
+	budget := GenerationBudget{TotalCP: 150, Attributes: 60, Advantages: 30, CoreSkills: 38, BackgroundSkills: 22}
+	budget.AddDisadvantageBonus(11)
+	if budget.Advantages != 35 {
+		t.Fatalf("expected advantages to gain 5 CP, got %d", budget.Advantages)
+	}
+	if budget.CoreSkills != 42 || budget.BackgroundSkills != 24 {
+		t.Fatalf("expected skill bonus to preserve skill-bucket weighting, got core=%d background=%d", budget.CoreSkills, budget.BackgroundSkills)
+	}
+}
+
+func TestAIParseGenerationBlueprintResponse(t *testing.T) {
+	response := `{"themes":["Marine","Mechanic","Veteran"],"budget_percentages":{"attributes":40,"advantages":20,"core_skills":25,"background_skills":15}}`
+	themes, budget, err := aiParseGenerationBlueprintResponse(response, 150, "marine mechanic")
+	if err != nil {
+		t.Fatalf("expected blueprint parse to succeed, got %v", err)
+	}
+	if strings.Join(themes, ",") != "Marine,Mechanic,Veteran" {
+		t.Fatalf("unexpected themes: %#v", themes)
+	}
+	if budget.Attributes+budget.Advantages+budget.CoreSkills+budget.BackgroundSkills != 150 {
+		t.Fatalf("expected budget to sum to 150, got %#v", budget)
+	}
+	if budget.Attributes != 60 || budget.Advantages != 30 || budget.CoreSkills != 38 || budget.BackgroundSkills != 22 {
+		t.Fatalf("unexpected budget allocation: %#v", budget)
+	}
+}
+
+func TestAIFilterThematicVocabularySections(t *testing.T) {
+	vocabulary := "Thematic Canonical GURPS Vocabulary:\n- Skills: Mechanic (Automobile)\n- Advantages: Signature Gear\n- Perks: Craftiness\n- Disadvantages: Overconfidence\n- Quirks: Keeps tools immaculate"
+	filtered := aiFilterThematicVocabularySections(vocabulary, "Disadvantages", "Quirks")
+	if strings.Contains(filtered, "Skills") || strings.Contains(filtered, "Advantages") || strings.Contains(filtered, "Perks") {
+		t.Fatalf("expected filtered vocabulary to exclude non-story sections, got %q", filtered)
+	}
+	if !strings.Contains(filtered, "Disadvantages: Overconfidence") || !strings.Contains(filtered, "Quirks: Keeps tools immaculate") {
+		t.Fatalf("expected filtered vocabulary to keep story sections, got %q", filtered)
+	}
+}
+
 func TestAutoBalanceUnspentPointsUsesExistingSkillSteps(t *testing.T) {
 	entity := gurps.NewEntity()
 	entity.TotalPoints = fxp.FromInteger(4)
