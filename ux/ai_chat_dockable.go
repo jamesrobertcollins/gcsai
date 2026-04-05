@@ -616,6 +616,8 @@ func (d *aiChatDockable) submit() {
 }
 
 func (d *aiChatDockable) addMessage(author, message string) *unison.Panel {
+	author = aiNormalizeExternalText("ui.chat.author", author)
+	message = aiNormalizeExternalText("ui.chat.message", message)
 	timestamp := time.Now()
 	d.chatMessages = append(d.chatMessages, aiChatMessage{Author: author, Text: message, Timestamp: timestamp})
 	isHuman := strings.EqualFold(author, i18n.Text("You"))
@@ -1131,12 +1133,15 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 		}
 		return result, nil
 	}, func(item any, sourcePath string) {
-		skill := item.(*gurps.Skill)
-		if skill.Name != "" && !skill.Container() {
-			nameableKeys := make(map[string]string)
-			skill.FillWithNameableKeys(nameableKeys, nil)
-			skillsMap[string(skill.TID)] = aiLibraryItemRef{ID: string(skill.TID), Name: skill.Name, DisplayName: aiCatalogEntryDisplayName(skill.Name, skill.Specialization), Specialization: skill.Specialization, SourcePath: sourcePath, Nameables: aiSortedNameableKeys(nameableKeys)}
-		}
+		root := item.(*gurps.Skill)
+		gurps.Traverse(func(skill *gurps.Skill) bool {
+			if skill.Name != "" && !skill.Container() {
+				nameableKeys := make(map[string]string)
+				skill.FillWithNameableKeys(nameableKeys, nil)
+				skillsMap[string(skill.TID)] = aiLibraryItemRef{ID: string(skill.TID), Name: skill.Name, DisplayName: aiCatalogEntryDisplayName(skill.Name, skill.Specialization), Specialization: skill.Specialization, SourcePath: sourcePath, Nameables: aiSortedNameableKeys(nameableKeys)}
+			}
+			return false
+		}, false, true, root)
 	})
 
 	loadItems(gurps.TraitsExt, func(fsys fs.FS, filePath string) ([]any, error) {
@@ -1150,33 +1155,35 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 		}
 		return result, nil
 	}, func(item any, sourcePath string) {
-		trait := item.(*gurps.Trait)
-		if trait.Name == "" || trait.Container() {
-			return
-		}
-		points := trait.AdjustedPoints()
-		name := trait.Name
-		// Discover nameable keys (@key@ placeholders) in this trait.
-		nameableKeys := make(map[string]string)
-		trait.FillWithNameableKeys(nameableKeys, nil)
-		sortedKeys := make([]string, 0, len(nameableKeys))
-		for k := range nameableKeys {
-			sortedKeys = append(sortedKeys, k)
-		}
-		sort.Strings(sortedKeys)
-		ref := aiLibraryItemRef{ID: string(trait.TID), Name: name, SourcePath: sourcePath, Nameables: sortedKeys}
-		key := string(trait.TID)
-		if points > 0 {
-			advantagesMap[key] = ref
-			return
-		}
-		if points < 0 {
-			if strings.Contains(strings.ToLower(name), "quirk") || strings.Contains(strings.ToLower(strings.Join(trait.Tags, " ")), "quirk") {
-				quirksMap[key] = ref
-				return
+		root := item.(*gurps.Trait)
+		gurps.Traverse(func(trait *gurps.Trait) bool {
+			if trait.Name == "" || trait.Container() {
+				return false
 			}
-			disadvantagesMap[key] = ref
-		}
+			points := trait.AdjustedPoints()
+			name := trait.Name
+			nameableKeys := make(map[string]string)
+			trait.FillWithNameableKeys(nameableKeys, nil)
+			sortedKeys := make([]string, 0, len(nameableKeys))
+			for k := range nameableKeys {
+				sortedKeys = append(sortedKeys, k)
+			}
+			sort.Strings(sortedKeys)
+			ref := aiLibraryItemRef{ID: string(trait.TID), Name: name, SourcePath: sourcePath, Nameables: sortedKeys}
+			key := string(trait.TID)
+			if points > 0 {
+				advantagesMap[key] = ref
+				return false
+			}
+			if points < 0 {
+				if strings.Contains(strings.ToLower(name), "quirk") || strings.Contains(strings.ToLower(strings.Join(trait.Tags, " ")), "quirk") {
+					quirksMap[key] = ref
+					return false
+				}
+				disadvantagesMap[key] = ref
+			}
+			return false
+		}, false, true, root)
 	})
 
 	loadItems(gurps.EquipmentExt, func(fsys fs.FS, filePath string) ([]any, error) {
@@ -1190,10 +1197,13 @@ func (d *aiChatDockable) collectAvailableLibraryItemNames(libraries gurps.Librar
 		}
 		return result, nil
 	}, func(item any, sourcePath string) {
-		eqp := item.(*gurps.Equipment)
-		if eqp.Name != "" && !eqp.Container() {
-			equipmentMap[string(eqp.TID)] = aiLibraryItemRef{ID: string(eqp.TID), Name: eqp.Name, SourcePath: sourcePath}
-		}
+		root := item.(*gurps.Equipment)
+		gurps.Traverse(func(eqp *gurps.Equipment) bool {
+			if eqp.Name != "" && !eqp.Container() {
+				equipmentMap[string(eqp.TID)] = aiLibraryItemRef{ID: string(eqp.TID), Name: eqp.Name, SourcePath: sourcePath}
+			}
+			return false
+		}, false, true, root)
 	})
 
 	for _, item := range skillsMap {
@@ -1277,11 +1287,21 @@ func (d *aiChatDockable) handleAIResponseWithCh(responseStr string, retryCh chan
 	retryCh <- retryItems
 }
 
-func (d *aiChatDockable) applyCorrectionResponse(responseStr string) {
+func (d *aiChatDockable) applyCorrectionResponse(responseStr string, retryItems []aiRetryItem) {
 	plan, ok := d.parseAIActionPlan(responseStr)
 	if !ok {
 		d.addMessage("AI", i18n.Text("AI corrections could not be parsed."))
 		d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+		return
+	}
+	filteredPlan := aiFilterCorrectionPlan(plan, retryItems)
+	ignoredCorrections := aiActionPlanItemCount(plan) - aiActionPlanItemCount(filteredPlan)
+	if !hasAIActionPlanContent(filteredPlan) {
+		if ignoredCorrections > 0 {
+			d.addMessage("AI", fmt.Sprintf(i18n.Text("Warning: ignored %d unrelated AI follow-up correction entries."), ignoredCorrections))
+		}
+		d.addMessage("AI", i18n.Text("Some corrected items still need exact library selection and were skipped."))
+		d.addMessage("AI", i18n.Text("AI corrections have been processed."))
 		return
 	}
 	catalog, err := d.aiLibraryCatalog()
@@ -1289,21 +1309,30 @@ func (d *aiChatDockable) applyCorrectionResponse(responseStr string) {
 		d.addMessage("AI", fmt.Sprintf(i18n.Text("AI library catalog could not be prepared for corrections: %v"), err))
 		return
 	}
-	resolvedPlan, retryItems, warnings := catalog.resolveAIActionPlan(plan)
+	resolvedPlan, remainingRetryItems, warnings := catalog.resolveAIActionPlan(filteredPlan)
+	if ignoredCorrections > 0 {
+		warnings = append(warnings, fmt.Sprintf(i18n.Text("Warning: ignored %d unrelated AI follow-up correction entries."), ignoredCorrections))
+	}
+	corrections := aiCollectResolvedCorrections(resolvedPlan, retryItems)
 	if hasAIActionPlanContent(resolvedPlan) {
 		applyWarnings, _, applyErr := d.applyAIActionPlan(resolvedPlan)
 		warnings = append(warnings, applyWarnings...)
 		if applyErr != nil {
 			d.addMessage("AI", fmt.Sprintf(i18n.Text("AI correction could not be applied: %v"), applyErr))
+			return
+		}
+		if len(corrections) != 0 {
+			aiLogResolvedCorrections(corrections)
+			d.addMessage("AI", aiBuildCorrectionSummary(corrections))
 		}
 	}
 	for _, warning := range warnings {
 		d.addMessage("AI", warning)
 	}
-	if len(retryItems) != 0 {
+	if len(remainingRetryItems) != 0 {
 		d.addMessage("AI", i18n.Text("Some corrected items still need exact library selection and were skipped."))
 	}
-	d.addMessage("AI", i18n.Text("AI plan has been applied to the active character sheet."))
+	d.addMessage("AI", i18n.Text("AI corrections have been applied to the active character sheet."))
 }
 
 type aiActionPlan struct {
@@ -1944,14 +1973,20 @@ func (d *aiChatDockable) findLibraryTraitByID(idStr string) (*gurps.Trait, gurps
 			if err != nil {
 				continue
 			}
-			for _, trait := range traits {
+			var match *gurps.Trait
+			gurps.Traverse(func(trait *gurps.Trait) bool {
 				if trait.Container() {
-					continue
+					return false
 				}
 				if string(trait.TID) == idStr {
 					trait.SetDataOwner(nil)
-					return trait, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = trait
+					return true
 				}
+				return false
+			}, false, true, traits...)
+			if match != nil {
+				return match, libraryFileForSet(set.Name, ref.FilePath), nil
 			}
 		}
 	}
@@ -1966,17 +2001,23 @@ func (d *aiChatDockable) findLibraryTraitByName(name string) (*gurps.Trait, gurp
 			if err != nil {
 				continue
 			}
-			for _, trait := range traits {
+			var match *gurps.Trait
+			gurps.Traverse(func(trait *gurps.Trait) bool {
 				if trait.Container() {
-					continue
+					return false
 				}
 				libBase := traitBaseNameForLookup(trait.Name)
 				if strings.EqualFold(trait.Name, name) ||
 					strings.EqualFold(libBase, name) ||
 					(searchBase != "" && (strings.EqualFold(trait.Name, searchBase) || strings.EqualFold(libBase, searchBase))) {
 					trait.SetDataOwner(nil)
-					return trait, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = trait
+					return true
 				}
+				return false
+			}, false, true, traits...)
+			if match != nil {
+				return match, libraryFileForSet(set.Name, ref.FilePath), nil
 			}
 		}
 	}
@@ -1995,14 +2036,20 @@ func (d *aiChatDockable) findLibrarySkillByID(idStr string) (*gurps.Skill, gurps
 			if err != nil {
 				continue
 			}
-			for _, skill := range skills {
+			var match *gurps.Skill
+			gurps.Traverse(func(skill *gurps.Skill) bool {
 				if skill.Container() {
-					continue
+					return false
 				}
 				if string(skill.TID) == idStr {
 					skill.SetDataOwner(nil)
-					return skill, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = skill
+					return true
 				}
+				return false
+			}, false, true, skills...)
+			if match != nil {
+				return match, libraryFileForSet(set.Name, ref.FilePath), nil
 			}
 		}
 	}
@@ -2416,26 +2463,34 @@ func (d *aiChatDockable) findLibrarySkillByName(name string) (*gurps.Skill, gurp
 			if err != nil {
 				continue
 			}
-			for _, skill := range skills {
+			var match *gurps.Skill
+			gurps.Traverse(func(skill *gurps.Skill) bool {
 				if skill.Container() {
-					continue
+					return false
 				}
 				displayName := skillDisplayName(skill.Name, skill.Specialization)
 				candidateBaseNorm := normalizeLookupText(skill.Name)
 				candidateSpecNorm := normalizeLookupText(skill.Specialization)
 				if strings.EqualFold(displayName, name) || strings.EqualFold(skill.Name, name) {
 					skill.SetDataOwner(nil)
-					return skill, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = skill
+					return true
 				}
 				if requestedSpecNorm != "" && candidateBaseNorm == requestedBaseNorm && candidateSpecNorm == requestedSpecNorm {
 					skill.SetDataOwner(nil)
-					return skill, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = skill
+					return true
 				}
 				candidateNorm := normalizeLookupText(displayName)
 				if requestedNorm != "" && candidateNorm == requestedNorm {
 					skill.SetDataOwner(nil)
-					return skill, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = skill
+					return true
 				}
+				return false
+			}, false, true, skills...)
+			if match != nil {
+				return match, libraryFileForSet(set.Name, ref.FilePath), nil
 			}
 		}
 	}
@@ -2665,14 +2720,20 @@ func (d *aiChatDockable) findLibraryEquipmentByName(name string) (*gurps.Equipme
 			if err != nil {
 				continue
 			}
-			for _, eqp := range equipment {
+			var match *gurps.Equipment
+			gurps.Traverse(func(eqp *gurps.Equipment) bool {
 				if eqp.Container() {
-					continue
+					return false
 				}
 				if strings.EqualFold(eqp.Name, name) {
 					eqp.SetDataOwner(nil)
-					return eqp, libraryFileForSet(set.Name, ref.FilePath), nil
+					match = eqp
+					return true
 				}
+				return false
+			}, false, true, equipment...)
+			if match != nil {
+				return match, libraryFileForSet(set.Name, ref.FilePath), nil
 			}
 		}
 	}
@@ -3293,6 +3354,8 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 			unison.InvokeTask(func() { d.addMessage("AI", fmt.Sprintf(i18n.Text("Error generating content: %v"), err)) })
 			return
 		}
+		prepared.UserPrompt = aiNormalizeExternalText("gemini.user-prompt.history", prepared.UserPrompt)
+		responseStr = aiNormalizeExternalText("gemini.response.history", responseStr)
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(prepared.UserPrompt)}, Role: "user"})
 		d.chatHistory = append(d.chatHistory, &genai.Content{Parts: []genai.Part{genai.Text(responseStr)}, Role: "model"})
 		retryCh := make(chan []aiRetryItem, 1)
@@ -3308,7 +3371,7 @@ func (d *aiChatDockable) queryGemini(prompt string) {
 				return
 			}
 			doneCh := make(chan struct{}, 1)
-			unison.InvokeTask(func() { d.applyCorrectionResponse(correctionStr); doneCh <- struct{}{} })
+			unison.InvokeTask(func() { d.applyCorrectionResponse(correctionStr, retryItems); doneCh <- struct{}{} })
 			<-doneCh
 		}
 	}()

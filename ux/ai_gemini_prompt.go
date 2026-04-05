@@ -88,6 +88,15 @@ var aiGeminiPreferredModels = []string{
 	"gemini-2.5-flash",
 }
 
+var aiGeminiRecommendedTermLimits = map[aiLibraryCategory]int{
+	aiLibraryCategoryAdvantage:    8,
+	aiLibraryCategoryDisadvantage: 8,
+	aiLibraryCategoryQuirk:        6,
+	aiLibraryCategorySkill:        12,
+	aiLibraryCategorySpell:        8,
+	aiLibraryCategoryEquipment:    8,
+}
+
 var (
 	aiGeminiNameFieldPattern             = regexp.MustCompile(`(?im)^\s*name\s*[:=-]\s*(.+?)\s*$`)
 	aiGeminiConceptFieldPattern          = regexp.MustCompile(`(?im)^\s*concept(?:\s*&\s*background)?\s*[:=-]\s*(.+?)\s*$`)
@@ -120,7 +129,7 @@ func (d *aiChatDockable) prepareGeminiRequest(request string) aiPreparedGeminiRe
 	request = strings.TrimSpace(request)
 	if !aiShouldUseGeminiBuildFlow(request, d.geminiBuild != nil) {
 		return aiPreparedGeminiRequest{
-			SystemPrompt: d.aiGeminiAssistantSystemPrompt(),
+			SystemPrompt: d.aiGeminiAssistantSystemPrompt(request),
 			UserPrompt:   request,
 		}
 	}
@@ -413,23 +422,57 @@ func aiFormatGeminiBuildBrief(brief aiGeminiBuildBrief) string {
 	return strings.Join(entries, "\n")
 }
 
-func (d *aiChatDockable) aiGeminiAssistantSystemPrompt() string {
+func aiGeminiConceptQueryFromBrief(brief aiGeminiBuildBrief) string {
+	parts := make([]string, 0, 4)
+	for _, part := range []string{brief.ConceptBackground, brief.SettingGenre, brief.SpecificRequests} {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if techLevel := strings.TrimSpace(brief.TechLevel); techLevel != "" {
+		parts = append(parts, "TL "+techLevel)
+	}
+	return strings.Join(parts, " ")
+}
+
+func (d *aiChatDockable) geminiRecommendedTermsForConcept(concept string) string {
+	concept = strings.TrimSpace(concept)
+	if concept == "" {
+		return ""
+	}
+	return d.recommendedTermsForLocalPhase(concept, aiGeminiRecommendedTermLimits)
+}
+
+func (d *aiChatDockable) geminiRecommendedTermsForBrief(brief aiGeminiBuildBrief) string {
+	return d.geminiRecommendedTermsForConcept(aiGeminiConceptQueryFromBrief(brief))
+}
+
+func (d *aiChatDockable) aiGeminiAssistantSystemPrompt(request string) string {
 	summary := d.currentCharacterSummary()
-	return strings.TrimSpace(fmt.Sprintf(`You are Google Gemini acting as a GURPS Fourth Edition character-sheet assistant.
+	recommendedTerms := d.geminiRecommendedTermsForConcept(request)
+	prompt := strings.TrimSpace(fmt.Sprintf(`You are Google Gemini acting as a GURPS Fourth Edition character-sheet assistant.
 Answer rules questions concisely and propose concrete character-sheet updates when the user asks for changes.
 The application will resolve your suggested advantages, disadvantages, quirks, skills, traits, and equipment against the local GCS library after you respond.
 Do not invent database ids. Leave the "id" field empty unless you are certain.
 Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
 If a fixed specialization is part of the canonical library name, include it in "name".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
+For nameable library items such as Signature Gear, Vow, Enemy, Distinctive Features, Claim to Hospitality, and Area Knowledge, keep the canonical base entry in "name" and put only the customized subject in "notes".
 Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
-Do not invent non-library advantages, disadvantages, skills, or equipment names.
+Do not invent non-library advantages, disadvantages, quirks, skills, spells, or equipment names.
+Quirks must match real library quirks. If a flavor detail is not a real quirk entry, express it through another canonical mechanic or omit it.
 If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
 Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
 If you include JSON, return exactly one top-level JSON object and nothing else.
 
 Current character sheet context:
 %s`, summary))
+	if recommendedTerms != "" {
+		prompt = fmt.Sprintf("%s\n\nConcept-linked library guidance:\n%s\nUse the recommended terms when they fit the request, especially for quirks, spells, signature items, and equipment.", prompt, recommendedTerms)
+	}
+	return strings.TrimSpace(prompt)
 }
 
 func (d *aiChatDockable) aiGeminiCorrectionSystemPrompt() string {
@@ -444,6 +487,7 @@ If no valid correction exists for an item, omit it.`)
 func (d *aiChatDockable) aiGeminiBuildPrompts(brief aiGeminiBuildBrief) (systemPrompt, userPrompt string) {
 	summary := d.currentCharacterSummary()
 	disadvantageLimit := aiDefaultDisadvantageLimit(brief.PointTotal)
+	recommendedTerms := d.geminiRecommendedTermsForBrief(brief)
 	systemPrompt = strings.TrimSpace(`You are Google Gemini operating as a GURPS Fourth Edition character-builder.
 The application has already collected a complete build brief from the user.
 Generate a substantial first-pass character build immediately. Do not return a partial draft.
@@ -453,13 +497,17 @@ Do not invent database ids. Leave the "id" field empty unless you are certain.
 Use canonical GURPS Fourth Edition names instead of descriptive paraphrases.
 If a fixed specialization is part of the canonical library name, include it in "name".
 If an item needs a user-defined subject, place, profession, specialty, or other nameable value, put only that value in "notes" and keep "name" focused on the base item.
+For nameable library items such as Signature Gear, Vow, Enemy, Distinctive Features, Claim to Hospitality, and Area Knowledge, keep the canonical base entry in "name" and put only the customized subject in "notes".
 Use "description" for lore, behavior, magical effects, and special handling notes. Do not put that material in "notes".
-Do not invent non-library advantages, disadvantages, skills, or equipment names.
+Do not invent non-library advantages, disadvantages, quirks, skills, spells, or equipment names.
+Quirks must match real library quirks. If a flavor detail is not a real quirk entry, express it through another canonical mechanic or omit it.
 If the concept includes a magical, signature, or supernatural item, represent it through canonical GURPS mechanics such as Signature Gear, Innate Attack, Ally, Blessed, Patron, or Striking ST, and put the lore and special behavior in "description".
 Only include an equipment entry when it matches a real library item; otherwise keep the special concept on the trait side.
+Prefer entries from the recommended term list supplied in the user prompt when they fit the brief.
 Populate profile fields when the brief provides them, especially name, title, and tech_level.
 Spend the requested point total and set spend_all_cp to true once the build is complete.`)
-	userPrompt = strings.TrimSpace(fmt.Sprintf(`Completed character brief:
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf(`Completed character brief:
 - Name: %s
 - Concept & Background: %s
 - Setting / Genre: %s
@@ -468,7 +516,12 @@ Spend the requested point total and set spend_all_cp to true once the build is c
 - Specific Mechanics/Requests: %s
 
 Current character sheet context:
-%s
+%s`, strconvQuote(brief.Name), strconvQuote(brief.ConceptBackground), strconvQuote(brief.SettingGenre), brief.PointTotal, brief.TechLevel, strconvQuote(brief.SpecificRequests), summary))
+	if recommendedTerms != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(recommendedTerms)
+	}
+	builder.WriteString(fmt.Sprintf(`
 
 Budget guidance:
 - Target exactly %d CP.
@@ -489,7 +542,8 @@ Return a single JSON object that uses the applicable keys from:
 - equipment
 - spend_all_cp
 
-Make reasonable assumptions and complete the build in one pass.`, strconvQuote(brief.Name), strconvQuote(brief.ConceptBackground), strconvQuote(brief.SettingGenre), brief.PointTotal, brief.TechLevel, strconvQuote(brief.SpecificRequests), summary, brief.PointTotal, disadvantageLimit))
+Make reasonable assumptions and complete the build in one pass.`, brief.PointTotal, disadvantageLimit))
+	userPrompt = strings.TrimSpace(builder.String())
 	return systemPrompt, userPrompt
 }
 
@@ -557,7 +611,11 @@ func aiDoGeminiRESTGenerateContent(ctx context.Context, requestURL string, paylo
 		}
 		return "", fmt.Errorf("unable to parse Gemini response: %w; body=%q", parseErr, bodyPreview)
 	}
-	return aiExtractGeminiRESTResponseText(parsed)
+	responseText, err := aiExtractGeminiRESTResponseText(parsed)
+	if err != nil {
+		return "", err
+	}
+	return aiNormalizeExternalText("gemini.rest.response", responseText), nil
 }
 
 func aiBuildGeminiRESTGenerateContentRequest(systemPrompt string, history []*genai.Content, prompt string, expectJSON bool) aiGeminiRESTGenerateContentRequest {

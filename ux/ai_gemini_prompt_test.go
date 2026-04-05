@@ -178,3 +178,40 @@ func TestAISanitizeGeminiRESTResponseBody(t *testing.T) {
 		t.Fatalf("expected sanitized response body, got %q", got)
 	}
 }
+
+func TestAIGeminiBuildPromptsIncludeRecommendedTermsAndQuirkGuardrails(t *testing.T) {
+	previousCache := globalAILibraryCatalogCache
+	globalAILibraryCatalogCache = aiLibraryCatalogCache{}
+	t.Cleanup(func() {
+		globalAILibraryCatalogCache = previousCache
+	})
+	libraries := gurps.GlobalSettings().Libraries()
+	globalAILibraryCatalogCache.catalog = newTestAILibraryCatalog(
+		&aiLibraryCatalogEntry{Category: aiLibraryCategoryAdvantage, ID: "adv-signature", Name: "Signature Gear", DisplayName: "Signature Gear", BaseName: "Signature Gear"},
+		&aiLibraryCatalogEntry{Category: aiLibraryCategorySkill, ID: "skill-criminology", Name: "Criminology", DisplayName: "Criminology", BaseName: "Criminology"},
+	)
+	globalAILibraryCatalogCache.signature = aiLibraryCatalogSignature(libraries)
+
+	var d aiChatDockable
+	systemPrompt, userPrompt := d.aiGeminiBuildPrompts(aiGeminiBuildBrief{
+		Name:              "Mara Voss",
+		ConceptBackground: "cyberpunk investigator",
+		SettingGenre:      "Cyberpunk",
+		PointTotal:        250,
+		TechLevel:         "8",
+		SpecificRequests:  "signature gear and criminology-focused detective work",
+	})
+	combined := systemPrompt + "\n" + userPrompt
+	checks := []string{
+		`Do not invent non-library advantages, disadvantages, quirks, skills, spells, or equipment names.`,
+		`Quirks must match real library quirks.`,
+		`Recommended Canonical GURPS Terms:`,
+		`Advantages: Signature Gear`,
+		`Skills: Criminology`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(combined, check) {
+			t.Fatalf("expected Gemini build prompt to contain %q, got %q", check, combined)
+		}
+	}
+}

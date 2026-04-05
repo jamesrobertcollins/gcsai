@@ -114,3 +114,76 @@ func TestAIFilterCorrectionPlanDropsUnrelatedEntries(t *testing.T) {
 		t.Fatalf("expected unrelated disadvantages to be dropped, got %#v", filtered.Disadvantages)
 	}
 }
+
+func TestAICollectResolvedCorrectionsBuildsUserSummary(t *testing.T) {
+	retryItems := []aiRetryItem{
+		{
+			Category: string(aiLibraryCategoryAdvantage),
+			Name:     "Signature Gear",
+			Notes:    "Groucho the Magical Hammer",
+			Candidates: []aiRetryCandidate{
+				{ID: "adv-signature", Name: "Signature Gear"},
+			},
+		},
+		{
+			Category: string(aiLibraryCategorySkill),
+			Name:     "Handguns",
+			Candidates: []aiRetryCandidate{
+				{ID: "skill-pistol", Name: "Guns (Pistol)"},
+			},
+		},
+	}
+	plan := aiActionPlan{
+		Advantages: []aiNamedAction{{
+			ID:    aiFlexibleString("adv-signature"),
+			Name:  aiFlexibleString("Signature Gear (Groucho the Magical Hammer)"),
+			Notes: aiFlexibleString("Groucho the Magical Hammer"),
+		}},
+		Skills: []aiSkillAction{{
+			ID:   aiFlexibleString("skill-pistol"),
+			Name: aiFlexibleString("Guns (Pistol)"),
+		}},
+	}
+
+	corrections := aiCollectResolvedCorrections(plan, retryItems)
+	if len(corrections) != 2 {
+		t.Fatalf("expected 2 corrections, got %#v", corrections)
+	}
+	summary := aiBuildCorrectionSummary(corrections)
+	checks := []string{
+		`advantage "Signature Gear [Groucho the Magical Hammer]" -> "Signature Gear (Groucho the Magical Hammer)"`,
+		`skill "Handguns" -> "Guns (Pistol)"`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(summary, check) {
+			t.Fatalf("expected summary to contain %q, got %q", check, summary)
+		}
+	}
+}
+
+func TestAILogResolvedCorrectionsEmitsTelemetry(t *testing.T) {
+	captured := captureResolverDebugLog(t)
+	aiLogResolvedCorrections([]aiResolvedCorrection{{
+		Category:   string(aiLibraryCategoryAdvantage),
+		Requested:  "Signature Gear [Groucho the Magical Hammer]",
+		Resolved:   "Signature Gear (Groucho the Magical Hammer)",
+		ResolvedID: "adv-signature",
+	}})
+
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(*captured))
+	}
+	got := (*captured)[0]
+	checks := []string{
+		"resolved-correction",
+		`category=advantages`,
+		`requested="Signature Gear [Groucho the Magical Hammer]"`,
+		`selected="Signature Gear (Groucho the Magical Hammer)"`,
+		`selected_id="adv-signature"`,
+	}
+	for _, check := range checks {
+		if !strings.Contains(got, check) {
+			t.Fatalf("expected log entry to contain %q, got %q", check, got)
+		}
+	}
+}

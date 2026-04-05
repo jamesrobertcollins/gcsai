@@ -45,7 +45,7 @@ func aiMarshalLocalContent(content *genai.Content) string {
 			builder.WriteString(string(txt))
 		}
 	}
-	return strings.TrimSpace(builder.String())
+	return strings.TrimSpace(aiNormalizeExternalText("ai.history.content", builder.String()))
 }
 
 func (d *aiChatDockable) buildLocalChatMessagesFromHistory(systemPrompt string, history []*genai.Content, userPrompt string) []aiLocalChatMessage {
@@ -140,7 +140,7 @@ func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLo
 		if responseText == "" {
 			return "", errors.New(i18n.Text("Local AI server returned no text."))
 		}
-		return responseText, nil
+		return aiNormalizeExternalText("local.response", responseText), nil
 	}
 	return "", errors.New(i18n.Text("Local AI server did not respond."))
 }
@@ -378,6 +378,132 @@ func aiCorrectionActionMatchesRetryItem(category, id, name string, item aiRetryI
 
 func aiActionPlanItemCount(plan aiActionPlan) int {
 	return len(plan.Advantages) + len(plan.Disadvantages) + len(plan.Quirks) + len(plan.Skills) + len(plan.Spells) + len(plan.Equipment)
+}
+
+type aiResolvedCorrection struct {
+	Category   string
+	Requested  string
+	Resolved   string
+	ResolvedID string
+}
+
+func aiCollectResolvedCorrections(plan aiActionPlan, retryItems []aiRetryItem) []aiResolvedCorrection {
+	corrections := make([]aiResolvedCorrection, 0, aiActionPlanItemCount(plan))
+	advantageItems, advantageUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryAdvantage))
+	disadvantageItems, disadvantageUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryDisadvantage))
+	quirkItems, quirkUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryQuirk))
+	skillItems, skillUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategorySkill))
+	spellItems, spellUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategorySpell))
+	equipmentItems, equipmentUsed := aiRetryItemsForCategory(retryItems, string(aiLibraryCategoryEquipment))
+
+	for _, action := range plan.Advantages {
+		if correction, ok := aiResolvedNamedCorrection(advantageItems, advantageUsed, string(aiLibraryCategoryAdvantage), action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	for _, action := range plan.Disadvantages {
+		if correction, ok := aiResolvedNamedCorrection(disadvantageItems, disadvantageUsed, string(aiLibraryCategoryDisadvantage), action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	for _, action := range plan.Quirks {
+		if correction, ok := aiResolvedNamedCorrection(quirkItems, quirkUsed, string(aiLibraryCategoryQuirk), action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	for _, action := range plan.Skills {
+		if correction, ok := aiResolvedSkillCorrection(skillItems, skillUsed, action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	for _, action := range plan.Spells {
+		if correction, ok := aiResolvedSpellCorrection(spellItems, spellUsed, action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	for _, action := range plan.Equipment {
+		if correction, ok := aiResolvedNamedCorrection(equipmentItems, equipmentUsed, string(aiLibraryCategoryEquipment), action); ok {
+			corrections = append(corrections, correction)
+		}
+	}
+	return corrections
+}
+
+func aiResolvedNamedCorrection(items []aiRetryItem, used []bool, category string, action aiNamedAction) (aiResolvedCorrection, bool) {
+	return aiResolvedCorrectionForAction(items, used, category, normalizeAISelectionID(action.ID.String()), normalizeLookupText(action.Name.String()), action.Name.String(), action.Notes.String())
+}
+
+func aiResolvedSkillCorrection(items []aiRetryItem, used []bool, action aiSkillAction) (aiResolvedCorrection, bool) {
+	return aiResolvedCorrectionForAction(items, used, string(aiLibraryCategorySkill), normalizeAISelectionID(action.ID.String()), normalizeLookupText(action.Name.String()), action.Name.String(), action.Notes.String())
+}
+
+func aiResolvedSpellCorrection(items []aiRetryItem, used []bool, action aiSkillAction) (aiResolvedCorrection, bool) {
+	return aiResolvedCorrectionForAction(items, used, string(aiLibraryCategorySpell), normalizeAISelectionID(action.ID.String()), normalizeLookupText(action.Name.String()), action.Name.String(), action.Notes.String())
+}
+
+func aiResolvedCorrectionForAction(items []aiRetryItem, used []bool, category, id, name, resolvedName, resolvedNotes string) (aiResolvedCorrection, bool) {
+	for i, item := range items {
+		if used[i] {
+			continue
+		}
+		if !aiCorrectionActionMatchesRetryItem(category, id, name, item) {
+			continue
+		}
+		used[i] = true
+		return aiResolvedCorrection{
+			Category:   aiCategoryJSONField(category),
+			Requested:  aiCorrectionDisplayName(item.Name, item.Notes),
+			Resolved:   aiCorrectionDisplayName(resolvedName, resolvedNotes),
+			ResolvedID: strings.TrimSpace(id),
+		}, true
+	}
+	return aiResolvedCorrection{}, false
+}
+
+func aiCorrectionDisplayName(name, notes string) string {
+	name = strings.TrimSpace(name)
+	notes = strings.TrimSpace(notes)
+	if notes == "" {
+		return name
+	}
+	if name == "" {
+		return notes
+	}
+	nameNorm := normalizeLookupText(name)
+	notesNorm := normalizeLookupText(notes)
+	if notesNorm != "" && strings.Contains(nameNorm, notesNorm) {
+		return name
+	}
+	return fmt.Sprintf("%s [%s]", name, notes)
+}
+
+func aiBuildCorrectionSummary(corrections []aiResolvedCorrection) string {
+	if len(corrections) == 0 {
+		return ""
+	}
+	limit := min(len(corrections), 5)
+	parts := make([]string, 0, limit)
+	for _, correction := range corrections[:limit] {
+		parts = append(parts, fmt.Sprintf("%s %q -> %q", aiCategorySingular(correction.Category), correction.Requested, correction.Resolved))
+	}
+	if len(corrections) > limit {
+		return fmt.Sprintf(i18n.Text("Resolver corrections applied: %s; plus %d more."), strings.Join(parts, "; "), len(corrections)-limit)
+	}
+	return fmt.Sprintf(i18n.Text("Resolver corrections applied: %s."), strings.Join(parts, "; "))
+}
+
+func aiLogResolvedCorrections(corrections []aiResolvedCorrection) {
+	for _, correction := range corrections {
+		fields := []string{
+			fmt.Sprintf("category=%s", aiCategoryJSONField(correction.Category)),
+			fmt.Sprintf("requested=%q", strings.TrimSpace(correction.Requested)),
+			fmt.Sprintf("selected=%q", strings.TrimSpace(correction.Resolved)),
+		}
+		if strings.TrimSpace(correction.ResolvedID) != "" {
+			fields = append(fields, fmt.Sprintf("selected_id=%q", strings.TrimSpace(correction.ResolvedID)))
+		}
+		aiWriteResolverDebugLog("resolved-correction", fields...)
+	}
 }
 
 func strconvQuote(text string) string {
