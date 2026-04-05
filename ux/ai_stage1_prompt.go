@@ -456,11 +456,49 @@ func aiShouldUseBuildContinuationPrompt(request string) bool {
 func aiLocalBaselineGatheringSystemPrompt(draft aiDraftProfile) string {
 	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS 4e Game Master. Your goal is to collect character profile data from the user. You need: Character Concept (e.g., Marine Mechanic, Noir Detective), Name, Title, Age, Weight, Height, Eye/Hair Color, Religion, TL, CP limit, Starting Wealth, and Game setting. Ask the user for missing details, or ask if they want them randomized/left blank. If Starting Wealth is unknown, default to the standard GURPS wealth for the agreed TL. Do NOT generate the character sheet yet.
 If the user wants a field randomized or left blank, record that choice literally in draft_profile.
-Once you have the required info, output exactly one top-level JSON object in this form and nothing else:
+Use machine-readable snake_case keys only inside draft_profile. Do not use display labels such as "Character Concept", "TL", "CP Limit", or "Game Setting".
+If the baseline is still missing information, return exactly one top-level JSON object in this form and nothing else:
+{"status":"incomplete","draft_profile":{...}}
+Once you have the required info, return exactly one top-level JSON object in this form and nothing else:
 {"status":"complete","draft_profile":{...}}
 
 Current draft profile:
 %s`, aiFormatDraftProfileForPrompt(draft, true)))
+}
+
+func aiLocalBaselineDraftProfileJSONSchema() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"status": map[string]any{
+				"type": "string",
+				"enum": []string{"incomplete", "complete"},
+			},
+			"draft_profile": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"character_concept": map[string]any{"type": "string"},
+					"name":              map[string]any{"type": "string"},
+					"title":             map[string]any{"type": "string"},
+					"age":               map[string]any{"type": "string"},
+					"weight":            map[string]any{"type": "string"},
+					"height":            map[string]any{"type": "string"},
+					"eye_color":         map[string]any{"type": "string"},
+					"hair_color":        map[string]any{"type": "string"},
+					"size":              map[string]any{"type": "string"},
+					"religion":          map[string]any{"type": "string"},
+					"tech_level":        map[string]any{"type": "string"},
+					"cp_limit":          map[string]any{"type": "string"},
+					"starting_wealth":   map[string]any{"type": "string"},
+					"game_limitations":  map[string]any{"type": "string"},
+					"world_setting":     map[string]any{"type": "string"},
+				},
+				"additionalProperties": true,
+			},
+		},
+		"required":             []string{"status", "draft_profile"},
+		"additionalProperties": true,
+	}
 }
 
 func aiDraftProfileFromParams(params aiCharacterRequestParams) aiDraftProfile {
@@ -610,7 +648,7 @@ func aiBuildBaselineApprovalMessage(draft aiDraftProfile) string {
 }
 
 func aiBuildBaselineEditModeMessage() string {
-	return strings.TrimSpace("Baseline approval has not been given yet, so generation has not started and no character sheet has been created. I am staying in baseline-edit mode until you approve the baseline data. Reply with \"Approve\", \"yes\", or \"go ahead\" to start generation.")
+	return strings.TrimSpace("Baseline approval has not been given yet, so generation has not started and no character sheet has been created. The baseline data has not been parsed into approval-ready form yet, so I am staying in baseline-edit mode until you approve the baseline data. Reply with \"Approve\", \"yes\", or \"go ahead\" to start generation.")
 }
 
 func aiBuildGenerationRequestFromDraftProfile(originalRequest string, draft aiDraftProfile) string {

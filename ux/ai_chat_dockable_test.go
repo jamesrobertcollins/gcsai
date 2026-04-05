@@ -77,3 +77,45 @@ func TestAIHistoryWithLastAssistantSummaryReplacesRawResponse(t *testing.T) {
 		t.Fatalf("expected updated categories in summary, got %q", text)
 	}
 }
+
+func TestAIParseLocalBaselineDraftProfileResponseAcceptsTitleCaseKeys(t *testing.T) {
+	responseText := `Here is the updated draft profile:
+{"status":"complete","draft_profile":{"Character Concept":"desert dweller","Name":"randomized","Title":"meth-head","TL":8,"CP Limit":100,"Starting Wealth":"$10,000","Game Setting":""}}`
+	response, ok := aiParseLocalBaselineDraftProfileResponse(responseText)
+	if !ok {
+		t.Fatal("expected baseline parser to accept title-cased draft_profile keys")
+	}
+	if response.DraftProfile.CharacterConcept.String() != "desert dweller" {
+		t.Fatalf("expected concept to be parsed, got %q", response.DraftProfile.CharacterConcept.String())
+	}
+	if response.DraftProfile.TechLevel.String() != "8" {
+		t.Fatalf("expected tech level 8, got %q", response.DraftProfile.TechLevel.String())
+	}
+	if response.DraftProfile.CPLimit.String() != "100" {
+		t.Fatalf("expected cp limit 100, got %q", response.DraftProfile.CPLimit.String())
+	}
+	if response.DraftProfile.StartingWealth.String() != "$10,000" {
+		t.Fatalf("expected starting wealth to be parsed, got %q", response.DraftProfile.StartingWealth.String())
+	}
+}
+
+func TestParseAIActionPlanAcceptsWrappedCharacterSheet(t *testing.T) {
+	var d aiChatDockable
+	responseText := `{"status":"complete","character_sheet":{"Name":"Bubba Jenkins","Title":"Meth-Head","TL":8,"Attributes":{"ST":11,"DX":12},"Advantages":["Temperature Tolerance"],"Disadvantages":["Bad Reputation"],"Skills":{"Driving (Automobile)":12},"Equipment":["Knife"]}}`
+	plan, ok := d.parseAIActionPlan(responseText)
+	if !ok {
+		t.Fatal("expected wrapped character_sheet response to be converted into an action plan")
+	}
+	if plan.Profile == nil || plan.Profile.Name.String() != "Bubba Jenkins" {
+		t.Fatalf("expected wrapped profile to populate action plan profile, got %#v", plan.Profile)
+	}
+	if len(plan.Attributes) != 2 {
+		t.Fatalf("expected wrapped attributes to populate action plan, got %d", len(plan.Attributes))
+	}
+	if len(plan.Skills) != 1 || plan.Skills[0].Name.String() != "Driving (Automobile)" {
+		t.Fatalf("expected wrapped skills to populate action plan, got %#v", plan.Skills)
+	}
+	if len(plan.Equipment) != 1 || plan.Equipment[0].Name.String() != "Knife" {
+		t.Fatalf("expected wrapped equipment to populate action plan, got %#v", plan.Equipment)
+	}
+}

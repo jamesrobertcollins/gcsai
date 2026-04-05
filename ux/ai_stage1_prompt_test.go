@@ -257,6 +257,8 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 		"Character Concept (e.g., Marine Mechanic, Noir Detective)",
 		"Ask the user for missing details, or ask if they want them randomized/left blank.",
 		"Do NOT generate the character sheet yet.",
+		"Use machine-readable snake_case keys only inside draft_profile.",
+		`{"status":"incomplete","draft_profile":{...}}`,
 		`{"status":"complete","draft_profile":{...}}`,
 		"Character Concept: Noir Detective",
 	}
@@ -264,6 +266,21 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("expected gathering prompt to contain %q, got %q", check, prompt)
 		}
+	}
+}
+
+func TestAILocalBaselineDraftProfileJSONSchemaRequiresDraftProfile(t *testing.T) {
+	schema, ok := aiLocalBaselineDraftProfileJSONSchema().(map[string]any)
+	if !ok {
+		t.Fatal("expected baseline schema to be a map")
+	}
+	required, ok := schema["required"].([]string)
+	if !ok {
+		t.Fatalf("expected required field list, got %#v", schema["required"])
+	}
+	joined := strings.Join(required, ",")
+	if !strings.Contains(joined, "status") || !strings.Contains(joined, "draft_profile") {
+		t.Fatalf("expected baseline schema to require status and draft_profile, got %#v", required)
 	}
 }
 

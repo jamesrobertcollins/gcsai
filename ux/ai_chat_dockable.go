@@ -1377,6 +1377,324 @@ func (s aiFlexibleString) String() string {
 	return string(s)
 }
 
+func aiNormalizedJSONKey(key string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(key))
+	if trimmed == "" {
+		return ""
+	}
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, r := range trimmed {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	normalized := strings.Trim(builder.String(), "_")
+	switch normalized {
+	case "tl":
+		return "tech_level"
+	case "cp_limit", "cplimit":
+		return "cp_limit"
+	case "eye_color", "eyecolor", "eyes":
+		return "eye_color"
+	case "hair_color", "haircolor":
+		return "hair_color"
+	case "game_setting", "world", "setting":
+		return "world_setting"
+	case "world_setting", "game_world_setting":
+		return "world_setting"
+	case "draftprofile":
+		return "draft_profile"
+	case "characterprofile":
+		return "character_profile"
+	case "charactersheet":
+		return "character_sheet"
+	default:
+		return normalized
+	}
+}
+
+func aiNormalizeJSONObjectKeys(value any) any {
+	return aiNormalizeJSONObjectKeysForParent(value, "")
+}
+
+func aiNormalizeJSONObjectKeysForParent(value any, parentKey string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		preserveKeys := parentKey == "attributes" || parentKey == "skills" || parentKey == "spells"
+		normalized := make(map[string]any, len(typed))
+		for key, val := range typed {
+			normalizedKey := key
+			if !preserveKeys {
+				normalizedKey = aiNormalizedJSONKey(key)
+			}
+			normalized[normalizedKey] = aiNormalizeJSONObjectKeysForParent(val, normalizedKey)
+		}
+		return normalized
+	case []any:
+		for i, item := range typed {
+			typed[i] = aiNormalizeJSONObjectKeysForParent(item, parentKey)
+		}
+		return typed
+	default:
+		return value
+	}
+}
+
+func aiMarshalNormalizedJSONPayload(payload string) ([]byte, bool) {
+	var raw any
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return nil, false
+	}
+	normalized := aiNormalizeJSONObjectKeys(raw)
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func aiDraftProfileHasMeaningfulData(profile aiDraftProfile) bool {
+	profile = aiNormalizeDraftProfile(profile)
+	return strings.TrimSpace(profile.CharacterConcept.String()) != "" ||
+		strings.TrimSpace(profile.Name.String()) != "" ||
+		strings.TrimSpace(profile.Title.String()) != "" ||
+		strings.TrimSpace(profile.Age.String()) != "" ||
+		strings.TrimSpace(profile.Weight.String()) != "" ||
+		strings.TrimSpace(profile.Height.String()) != "" ||
+		strings.TrimSpace(profile.EyeColor.String()) != "" ||
+		strings.TrimSpace(profile.HairColor.String()) != "" ||
+		strings.TrimSpace(profile.Size.String()) != "" ||
+		strings.TrimSpace(profile.Religion.String()) != "" ||
+		strings.TrimSpace(profile.TechLevel.String()) != "" ||
+		strings.TrimSpace(profile.CPLimit.String()) != "" ||
+		strings.TrimSpace(profile.StartingWealth.String()) != "" ||
+		strings.TrimSpace(profile.GameLimitations.String()) != "" ||
+		strings.TrimSpace(profile.WorldSetting.String()) != ""
+}
+
+func aiDraftProfileReadyForApproval(status string, profile aiDraftProfile) bool {
+	profile = aiNormalizeDraftProfile(profile)
+	if strings.EqualFold(strings.TrimSpace(status), "complete") {
+		return strings.TrimSpace(profile.CharacterConcept.String()) != ""
+	}
+	return false
+}
+
+func aiStringFromValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return typed.String()
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func aiMapStringAny(value any) map[string]any {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return m
+}
+
+func aiSliceAny(value any) []any {
+	slice, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	return slice
+}
+
+func aiProfileActionFromMap(raw map[string]any) *aiProfileAction {
+	if raw == nil {
+		return nil
+	}
+	profile := &aiProfileAction{
+		Name:         aiFlexibleString(aiStringFromValue(raw["name"])),
+		Title:        aiFlexibleString(aiStringFromValue(raw["title"])),
+		Organization: aiFlexibleString(aiStringFromValue(raw["organization"])),
+		Religion:     aiFlexibleString(aiStringFromValue(raw["religion"])),
+		TechLevel:    aiFlexibleString(firstNonEmptyString(aiStringFromValue(raw["tech_level"]), aiStringFromValue(raw["tl"]))),
+		Gender:       aiFlexibleString(aiStringFromValue(raw["gender"])),
+		Age:          aiFlexibleString(aiStringFromValue(raw["age"])),
+		Birthday:     aiFlexibleString(aiStringFromValue(raw["birthday"])),
+		Eyes:         aiFlexibleString(firstNonEmptyString(aiStringFromValue(raw["eyes"]), aiStringFromValue(raw["eye_color"]))),
+		Hair:         aiFlexibleString(firstNonEmptyString(aiStringFromValue(raw["hair"]), aiStringFromValue(raw["hair_color"]))),
+		Skin:         aiFlexibleString(aiStringFromValue(raw["skin"])),
+		Handedness:   aiFlexibleString(aiStringFromValue(raw["handedness"])),
+		Height:       aiFlexibleString(aiStringFromValue(raw["height"])),
+		Weight:       aiFlexibleString(aiStringFromValue(raw["weight"])),
+	}
+	if !hasAIActionPlanContent(aiActionPlan{Profile: profile}) {
+		return nil
+	}
+	return profile
+}
+
+func aiNamedActionsFromArray(value any) []aiNamedAction {
+	items := aiSliceAny(value)
+	if len(items) == 0 {
+		return nil
+	}
+	actions := make([]aiNamedAction, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case string:
+			name := strings.TrimSpace(typed)
+			if name != "" {
+				actions = append(actions, aiNamedAction{Name: aiFlexibleString(name)})
+			}
+		case map[string]any:
+			name := firstNonEmptyString(aiStringFromValue(typed["name"]), aiStringFromValue(typed["title"]))
+			if name == "" {
+				continue
+			}
+			actions = append(actions, aiNamedAction{
+				ID:          aiFlexibleString(aiStringFromValue(typed["id"])),
+				Name:        aiFlexibleString(name),
+				Notes:       aiFlexibleString(aiStringFromValue(typed["notes"])),
+				Description: aiFlexibleString(aiStringFromValue(typed["description"])),
+				Points:      aiFlexibleString(aiStringFromValue(typed["points"])),
+				Quantity:    aiFlexibleInt(aiParseLoosePositiveInt(aiStringFromValue(typed["quantity"]))),
+			})
+		}
+	}
+	return actions
+}
+
+func aiSkillActionsFromValue(value any) []aiSkillAction {
+	if rawMap := aiMapStringAny(value); rawMap != nil {
+		actions := make([]aiSkillAction, 0, len(rawMap))
+		for name, level := range rawMap {
+			trimmedName := strings.TrimSpace(name)
+			if trimmedName == "" {
+				continue
+			}
+			actions = append(actions, aiSkillAction{Name: aiFlexibleString(trimmedName), Level: aiFlexibleString(aiStringFromValue(level))})
+		}
+		return actions
+	}
+	items := aiSliceAny(value)
+	if len(items) == 0 {
+		return nil
+	}
+	actions := make([]aiSkillAction, 0, len(items))
+	for _, item := range items {
+		switch typed := item.(type) {
+		case string:
+			name := strings.TrimSpace(typed)
+			if name != "" {
+				actions = append(actions, aiSkillAction{Name: aiFlexibleString(name)})
+			}
+		case map[string]any:
+			name := firstNonEmptyString(aiStringFromValue(typed["name"]), aiStringFromValue(typed["title"]))
+			if name == "" {
+				continue
+			}
+			actions = append(actions, aiSkillAction{
+				ID:          aiFlexibleString(aiStringFromValue(typed["id"])),
+				Name:        aiFlexibleString(name),
+				Notes:       aiFlexibleString(aiStringFromValue(typed["notes"])),
+				Description: aiFlexibleString(aiStringFromValue(typed["description"])),
+				Points:      aiFlexibleString(aiStringFromValue(typed["points"])),
+				Value:       aiFlexibleString(aiStringFromValue(typed["value"])),
+				Level:       aiFlexibleString(aiStringFromValue(typed["level"])),
+			})
+		}
+	}
+	return actions
+}
+
+func aiAttributeActionsFromValue(value any) []aiAttributeAction {
+	if rawMap := aiMapStringAny(value); rawMap != nil {
+		actions := make([]aiAttributeAction, 0, len(rawMap))
+		for name, attrValue := range rawMap {
+			trimmedName := strings.TrimSpace(name)
+			if trimmedName == "" {
+				continue
+			}
+			actions = append(actions, aiAttributeAction{ID: aiFlexibleString(trimmedName), Value: aiFlexibleString(aiStringFromValue(attrValue))})
+		}
+		return actions
+	}
+	items := aiSliceAny(value)
+	if len(items) == 0 {
+		return nil
+	}
+	actions := make([]aiAttributeAction, 0, len(items))
+	for _, item := range items {
+		if typed := aiMapStringAny(item); typed != nil {
+			actions = append(actions, aiAttributeAction{
+				ID:    aiFlexibleString(aiStringFromValue(typed["id"])),
+				Name:  aiFlexibleString(aiStringFromValue(typed["name"])),
+				Value: aiFlexibleString(aiStringFromValue(typed["value"])),
+			})
+		}
+	}
+	return actions
+}
+
+func aiActionPlanFromWrappedSection(raw map[string]any) aiActionPlan {
+	if raw == nil {
+		return aiActionPlan{}
+	}
+	plan := aiActionPlan{
+		Profile:       aiProfileActionFromMap(raw),
+		Attributes:    aiAttributeActionsFromValue(raw["attributes"]),
+		Advantages:    aiNamedActionsFromArray(raw["advantages"]),
+		Disadvantages: aiNamedActionsFromArray(raw["disadvantages"]),
+		Quirks:        aiNamedActionsFromArray(raw["quirks"]),
+		Skills:        aiSkillActionsFromValue(raw["skills"]),
+		Spells:        aiSkillActionsFromValue(raw["spells"]),
+		Equipment:     aiNamedActionsFromArray(raw["equipment"]),
+	}
+	if spend, ok := raw["spend_all_cp"].(bool); ok {
+		plan.SpendAllCP = spend
+	}
+	return plan
+}
+
+func aiActionPlanFromWrapperMap(raw map[string]any) (aiActionPlan, bool) {
+	var plan aiActionPlan
+	found := false
+	for _, key := range []string{"character_sheet", "character_profile"} {
+		if section := aiMapStringAny(raw[key]); section != nil {
+			mergeAIActionPlan(&plan, aiActionPlanFromWrappedSection(section))
+			found = true
+		}
+	}
+	if section := aiMapStringAny(raw["draft_profile"]); section != nil && !found {
+		plan.Profile = aiProfileActionFromMap(section)
+		found = plan.Profile != nil
+	}
+	if !found || !hasAIActionPlanContent(plan) {
+		return aiActionPlan{}, false
+	}
+	return plan, true
+}
+
 type aiLibraryItemRef struct {
 	ID             string
 	Name           string
@@ -1475,10 +1793,22 @@ func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
 			continue
 		}
 		var plan aiActionPlan
-		if err := json.Unmarshal([]byte(cleaned), &plan); err != nil {
+		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
+			if err := json.Unmarshal(normalized, &plan); err == nil && hasAIActionPlanContent(plan) {
+				mergeAIActionPlan(&merged, plan)
+				found = true
+				continue
+			}
+			var raw map[string]any
+			if err := json.Unmarshal(normalized, &raw); err == nil {
+				if wrappedPlan, ok := aiActionPlanFromWrapperMap(raw); ok {
+					mergeAIActionPlan(&merged, wrappedPlan)
+					found = true
+				}
+			}
 			continue
 		}
-		if !hasAIActionPlanContent(plan) {
+		if err := json.Unmarshal([]byte(cleaned), &plan); err != nil || !hasAIActionPlanContent(plan) {
 			continue
 		}
 		mergeAIActionPlan(&merged, plan)
@@ -3419,13 +3749,19 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				session.GatheringLog = nil
 			}
 			if session.State == aiBuildSessionStateGathering {
+				if aiIsExplicitApproval(prompt) {
+					unison.InvokeTask(func() {
+						d.addMessage("AI", aiBuildBaselineEditModeMessage())
+					})
+					return
+				}
 				sysPrompt := aiLocalBaselineGatheringSystemPrompt(session.DraftProfile)
 				writeSystemPromptDebugFile(sysPrompt)
 				messages := make([]aiLocalChatMessage, 0, len(session.GatheringLog)+2)
 				messages = append(messages, aiLocalChatMessage{Role: "system", Content: sysPrompt})
 				messages = append(messages, session.GatheringLog...)
 				messages = append(messages, aiLocalChatMessage{Role: "user", Content: prompt})
-				responseStr, err := d.queryLocalModel(endpoint, model, messages, nil)
+				responseStr, err := d.queryLocalModel(endpoint, model, messages, aiLocalBaselineDraftProfileJSONSchema())
 				if err != nil {
 					unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
 					return
@@ -3433,11 +3769,20 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				if response, ok := aiParseLocalBaselineDraftProfileResponse(responseStr); ok {
 					session.DraftProfile = aiMergeDraftProfile(session.DraftProfile, response.DraftProfile)
 					session.Params = aiDraftProfileToCharacterRequestParams(session.DraftProfile, session.Params)
-					session.State = aiBuildSessionStatePendingApproval
-					session.GatheringLog = nil
-					unison.InvokeTask(func() {
-						d.addMessage("AI", aiBuildBaselineApprovalMessage(session.DraftProfile))
-					})
+					if aiDraftProfileReadyForApproval(response.Status.String(), session.DraftProfile) {
+						session.State = aiBuildSessionStatePendingApproval
+						session.GatheringLog = nil
+						unison.InvokeTask(func() {
+							d.addMessage("AI", aiBuildBaselineApprovalMessage(session.DraftProfile))
+						})
+					} else {
+						session.State = aiBuildSessionStateGathering
+						session.GatheringLog = append(session.GatheringLog,
+							aiLocalChatMessage{Role: "user", Content: prompt},
+							aiLocalChatMessage{Role: "assistant", Content: responseStr},
+						)
+						unison.InvokeTask(func() { d.addMessage("AI", responseStr) })
+					}
 					return
 				}
 				session.GatheringLog = append(session.GatheringLog,
@@ -3556,14 +3901,15 @@ func aiParseLocalBaselineDraftProfileResponse(text string) (aiLocalBaselineDraft
 			continue
 		}
 		var response aiLocalBaselineDraftProfileResponse
-		if err := json.Unmarshal([]byte(cleaned), &response); err != nil {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(response.Status.String()), "complete") {
+		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
+			if err := json.Unmarshal(normalized, &response); err != nil {
+				continue
+			}
+		} else if err := json.Unmarshal([]byte(cleaned), &response); err != nil {
 			continue
 		}
 		response.DraftProfile = aiNormalizeDraftProfile(response.DraftProfile)
-		if strings.TrimSpace(response.DraftProfile.CharacterConcept.String()) == "" {
+		if !aiDraftProfileHasMeaningfulData(response.DraftProfile) {
 			continue
 		}
 		return response, true
