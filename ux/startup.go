@@ -49,6 +49,7 @@ func Start(files []string) {
 			xos.ExitIfErr(err)
 			SetupMenuBar(wnd)
 			InitWorkspace(wnd)
+			WriteAIDebugSkillDumpFile()
 			OpenFiles(files)
 			go func() {
 				for paths := range pathsChan {

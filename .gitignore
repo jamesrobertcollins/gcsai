@@ -13,3 +13,6 @@
 /__debug_bin*
 /todo.md
 /*.prof
+/test.exe
+/ai-debug-skills.txt
+/ai-debug-system-prompt.txt

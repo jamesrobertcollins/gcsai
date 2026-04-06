@@ -110,8 +110,26 @@ func finishInit() {
 		Workspace.TopDock.MarkForLayoutAndRedraw()
 		Workspace.Window.MarkForRedraw()
 	}
+	ensureDockContainersHaveCurrentDockable(Workspace.TopDock)
+	ensureDockContainersHaveCurrentDockable(Workspace.DocumentDock.Dock)
 	Workspace.Navigator.InitialFocus()
 	Workspace.ErrorHandler = func(msg string, err error) { unison.ErrorDialogWithError(msg, err) }
+}
+
+func ensureDockContainersHaveCurrentDockable(dock *unison.Dock) {
+	if dock == nil {
+		return
+	}
+	dock.RootDockLayout().ForEachDockContainer(func(dc *unison.DockContainer) bool {
+		if dc.CurrentDockable() != nil {
+			return false
+		}
+		dockables := dc.Dockables()
+		if len(dockables) > 0 {
+			dc.SetCurrentDockable(dockables[0])
+		}
+		return false
+	})
 }
 
 func restoreDockState() bool {

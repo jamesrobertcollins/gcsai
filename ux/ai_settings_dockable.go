@@ -73,6 +73,18 @@ func (d *aiSettingsDockable) initContent(content *unison.Panel) {
 	// apiKeyField.Field.Password = true
 	content.AddChild(apiKeyField)
 
+	geminiModelLabel := NewFieldLeadingLabel(i18n.Text("Gemini Model"), false)
+	geminiModelLabel.Tooltip = newWrappedTooltip(fmt.Sprintf(i18n.Text("The Gemini model name to use. Defaults to %s if left blank."), gurps.DefaultGeminiModel))
+	content.AddChild(geminiModelLabel)
+
+	geminiModelField := NewStringField(nil, "", i18n.Text("Gemini Model"),
+		func() string { return settings.EffectiveGeminiModel() },
+		func(value string) {
+			settings.GeminiModel = strings.TrimSpace(value)
+			MarkModified(content)
+		})
+	content.AddChild(geminiModelField)
+
 	localURLLabel := NewFieldLeadingLabel(i18n.Text("Local Server URL"), false)
 	localURLLabel.Tooltip = newWrappedTooltip(i18n.Text("Complete URL of the Ollama server, for example http://localhost:11434."))
 	content.AddChild(localURLLabel)
@@ -255,6 +267,8 @@ func (d *aiSettingsDockable) initContent(content *unison.Panel) {
 		isGemini := settings.Provider == gurps.AIProviderGemini
 		geminiAPIKeyLabel.SetEnabled(isGemini)
 		apiKeyField.SetEnabled(isGemini)
+		geminiModelLabel.SetEnabled(isGemini)
+		geminiModelField.SetEnabled(isGemini)
 
 		isLocal := settings.Provider == gurps.AIProviderLocal
 		localURLLabel.SetEnabled(isLocal)

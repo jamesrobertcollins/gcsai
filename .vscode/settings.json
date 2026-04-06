@@ -1,5 +1,9 @@
 {
 	"go.toolsEnvVars": {
 		"GOEXPERIMENT": "jsonv2"
+	},
+	"chat.tools.terminal.autoApprove": {
+		"go": true,
+		"ForEach-Object": true
 	}
 }
