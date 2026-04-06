@@ -13,6 +13,13 @@ func TestAINormalizeExternalTextReplacesInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestAIEnsureValidUTF8ReplacesInvalidUTF8(t *testing.T) {
+	raw := string([]byte{'A', 0xff, 'B'})
+	if got := aiEnsureValidUTF8(raw); got != "A\ufffdB" {
+		t.Fatalf("expected invalid UTF-8 to be sanitized, got %q", got)
+	}
+}
+
 func TestAIMarshalLocalContentNormalizesInvalidUTF8(t *testing.T) {
 	content := &genai.Content{Parts: []genai.Part{genai.Text(string([]byte{'A', 0xff, 'B'}))}}
 	if got := aiMarshalLocalContent(content); got != "A\ufffdB" {

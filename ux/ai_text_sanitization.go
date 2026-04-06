@@ -9,12 +9,19 @@ import (
 
 const aiUTF8Replacement = "\ufffd"
 
-func aiNormalizeExternalText(source, text string) string {
+func aiEnsureValidUTF8(text string) string {
 	if text == "" || utf8.ValidString(text) {
 		return text
 	}
+	return strings.ToValidUTF8(text, aiUTF8Replacement)
+}
+
+func aiNormalizeExternalText(source, text string) string {
+	normalized := aiEnsureValidUTF8(text)
+	if normalized == text {
+		return text
+	}
 	invalidCount, bytePreview := aiInvalidUTF8Diagnostics(text, 24)
-	normalized := strings.ToValidUTF8(text, aiUTF8Replacement)
 	slog.Warn("normalized invalid UTF-8 text",
 		"source", strings.TrimSpace(source),
 		"invalid_sequences", invalidCount,

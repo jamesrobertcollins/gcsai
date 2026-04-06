@@ -814,11 +814,11 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 	}
 	entity := sheet.entity
 	var builder strings.Builder
-	concept := strings.TrimSpace(entity.Profile.Title)
+	concept := strings.TrimSpace(aiEnsureValidUTF8(entity.Profile.Title))
 	if concept == "" {
 		concept = "(not specified)"
 	}
-	tl := strings.TrimSpace(entity.Profile.TechLevel)
+	tl := strings.TrimSpace(aiEnsureValidUTF8(entity.Profile.TechLevel))
 	if tl == "" {
 		tl = "(not specified)"
 	}
@@ -854,9 +854,9 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 		}
 		points := trait.AdjustedPoints()
 		if points > 0 {
-			advantages = append(advantages, fmt.Sprintf("%s (+%s)", trait.Name, points.String()))
+			advantages = append(advantages, fmt.Sprintf("%s (+%s)", aiEnsureValidUTF8(trait.Name), points.String()))
 		} else if points < 0 {
-			disadvantages = append(disadvantages, fmt.Sprintf("%s (%s)", trait.Name, points.String()))
+			disadvantages = append(disadvantages, fmt.Sprintf("%s (%s)", aiEnsureValidUTF8(trait.Name), points.String()))
 		}
 	}
 	if len(advantages) > 0 {
@@ -875,7 +875,7 @@ func (d *aiChatDockable) currentCharacterSummary() string {
 		if skill.Container() {
 			continue
 		}
-		name := skill.Name
+		name := aiEnsureValidUTF8(skill.Name)
 		if name == "" {
 			name = "Unnamed Skill"
 		}
@@ -1357,24 +1357,24 @@ func (s *aiFlexibleString) UnmarshalJSON(data []byte) error {
 	}
 	var text string
 	if err := json.Unmarshal(data, &text); err == nil {
-		*s = aiFlexibleString(text)
+		*s = aiFlexibleString(aiEnsureValidUTF8(text))
 		return nil
 	}
 	var number json.Number
 	if err := json.Unmarshal(data, &number); err == nil {
-		*s = aiFlexibleString(number.String())
+		*s = aiFlexibleString(aiEnsureValidUTF8(number.String()))
 		return nil
 	}
 	var value float64
 	if err := json.Unmarshal(data, &value); err == nil {
-		*s = aiFlexibleString(strconv.FormatFloat(value, 'f', -1, 64))
+		*s = aiFlexibleString(aiEnsureValidUTF8(strconv.FormatFloat(value, 'f', -1, 64)))
 		return nil
 	}
 	return fmt.Errorf("unsupported JSON value for text field: %s", trimmed)
 }
 
 func (s aiFlexibleString) String() string {
-	return string(s)
+	return aiEnsureValidUTF8(string(s))
 }
 
 func aiNormalizedJSONKey(key string) string {
@@ -1490,24 +1490,24 @@ func aiDraftProfileReadyForApproval(status string, profile aiDraftProfile) bool 
 func aiStringFromValue(value any) string {
 	switch typed := value.(type) {
 	case string:
-		return strings.TrimSpace(typed)
+		return strings.TrimSpace(aiEnsureValidUTF8(typed))
 	case json.Number:
-		return typed.String()
+		return aiEnsureValidUTF8(typed.String())
 	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
+		return aiEnsureValidUTF8(strconv.FormatFloat(typed, 'f', -1, 64))
 	case float32:
-		return strconv.FormatFloat(float64(typed), 'f', -1, 64)
+		return aiEnsureValidUTF8(strconv.FormatFloat(float64(typed), 'f', -1, 64))
 	case int:
-		return strconv.Itoa(typed)
+		return aiEnsureValidUTF8(strconv.Itoa(typed))
 	case int64:
-		return strconv.FormatInt(typed, 10)
+		return aiEnsureValidUTF8(strconv.FormatInt(typed, 10))
 	case bool:
 		if typed {
 			return "true"
 		}
 		return "false"
 	default:
-		return strings.TrimSpace(fmt.Sprint(value))
+		return strings.TrimSpace(aiEnsureValidUTF8(fmt.Sprint(value)))
 	}
 }
 

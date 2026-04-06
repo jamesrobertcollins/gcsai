@@ -119,3 +119,24 @@ func TestParseAIActionPlanAcceptsWrappedCharacterSheet(t *testing.T) {
 		t.Fatalf("expected wrapped equipment to populate action plan, got %#v", plan.Equipment)
 	}
 }
+
+func TestAIFlexibleStringStringNormalizesInvalidUTF8(t *testing.T) {
+	value := aiFlexibleString(string([]byte{'A', 0xff, 'B'}))
+	if got := value.String(); got != "A\ufffdB" {
+		t.Fatalf("expected flexible string to normalize invalid UTF-8, got %q", got)
+	}
+}
+
+func TestApplyProfileActionNormalizesInvalidUTF8(t *testing.T) {
+	entity := gurps.NewEntity()
+	applyProfileAction(entity, &aiProfileAction{
+		Name:  aiFlexibleString(string([]byte{'A', 0xff, 'B'})),
+		Title: aiFlexibleString(string([]byte{'X', 0xff, 'Y'})),
+	})
+	if entity.Profile.Name != "A\ufffdB" {
+		t.Fatalf("expected profile name to be normalized, got %q", entity.Profile.Name)
+	}
+	if entity.Profile.Title != "X\ufffdY" {
+		t.Fatalf("expected profile title to be normalized, got %q", entity.Profile.Title)
+	}
+}
