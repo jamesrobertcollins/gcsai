@@ -32,8 +32,8 @@ func TestSnapToValidSkillPoints(t *testing.T) {
 	}
 }
 
-func TestAIPhase2OnlyActionPlanSnapsSkillPoints(t *testing.T) {
-	plan := aiSnapSkillPointsInPlan(aiPhase2OnlyActionPlan(aiActionPlan{
+func TestAISkillsAndSpellsOnlyActionPlanSnapsSkillPoints(t *testing.T) {
+	plan := aiSkillsAndSpellsOnlyActionPlan(aiActionPlan{
 		Attributes: []aiAttributeAction{{ID: aiFlexibleString("ST"), Value: aiFlexibleString("12")}},
 		Skills: []aiSkillAction{
 			{Name: aiFlexibleString("Brawling"), Points: aiFlexibleString("3")},
@@ -41,10 +41,7 @@ func TestAIPhase2OnlyActionPlanSnapsSkillPoints(t *testing.T) {
 		},
 		Spells:    []aiSkillAction{{Name: aiFlexibleString("Fireball"), Points: aiFlexibleString("3")}},
 		Equipment: []aiNamedAction{{Name: aiFlexibleString("Tool Kit"), Quantity: aiFlexibleInt(1)}},
-	}))
-	if len(plan.Attributes) != 0 {
-		t.Fatalf("expected phase-2 filter to drop attributes, got %d", len(plan.Attributes))
-	}
+	})
 	if len(plan.Skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(plan.Skills))
 	}
@@ -62,34 +59,6 @@ func TestAIPhase2OnlyActionPlanSnapsSkillPoints(t *testing.T) {
 	}
 	if got := plan.Spells[0].Points.String(); got != "2" {
 		t.Fatalf("expected spell points to snap to 2, got %q", got)
-	}
-}
-
-func TestAIPhase1OnlyActionPlanPreservesProfile(t *testing.T) {
-	plan := aiPhase1OnlyActionPlan(aiActionPlan{
-		Profile: &aiProfileAction{
-			Name:   aiFlexibleString("Jozalyn Trenhalie"),
-			Age:    aiFlexibleString("20"),
-			Height: aiFlexibleString("5'8\""),
-		},
-		Attributes: []aiAttributeAction{{ID: aiFlexibleString("ST"), Value: aiFlexibleString("12")}},
-		Skills:     []aiSkillAction{{Name: aiFlexibleString("Observation"), Points: aiFlexibleString("2")}},
-		Equipment:  []aiNamedAction{{Name: aiFlexibleString("Backpack"), Quantity: aiFlexibleInt(1)}},
-	})
-	if plan.Profile == nil {
-		t.Fatal("expected phase-1 filter to preserve profile")
-	}
-	if got := plan.Profile.Name.String(); got != "Jozalyn Trenhalie" {
-		t.Fatalf("expected profile name to survive phase-1 filter, got %q", got)
-	}
-	if got := plan.Profile.Height.String(); got != "5'8\"" {
-		t.Fatalf("expected profile height to survive phase-1 filter, got %q", got)
-	}
-	if len(plan.Skills) != 0 {
-		t.Fatalf("expected phase-1 filter to drop skills, got %d", len(plan.Skills))
-	}
-	if len(plan.Equipment) != 0 {
-		t.Fatalf("expected phase-1 filter to drop equipment, got %d", len(plan.Equipment))
 	}
 }
 
@@ -296,7 +265,7 @@ func TestExecuteLocalCorrectionLoopResolvesFollowUpAlternatives(t *testing.T) {
 	}
 
 	var dockable aiChatDockable
-	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Phase 1", resolution, aiPhase1OnlyActionPlan)
+	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Step 4: Advantages & Perks", resolution, aiAdvantagesOnlyActionPlan)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -350,7 +319,7 @@ func TestExecuteLocalCorrectionLoopHardStopsOnPointBearingItems(t *testing.T) {
 	}
 
 	var dockable aiChatDockable
-	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Phase 1", resolution, aiPhase1OnlyActionPlan)
+	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Step 4: Advantages & Perks", resolution, aiAdvantagesOnlyActionPlan)
 	if err == nil {
 		t.Fatal("expected hard-stop error for unresolved point-bearing item")
 	}
@@ -398,7 +367,7 @@ func TestExecuteLocalCorrectionLoopAllowsEquipmentRetriesToRemain(t *testing.T) 
 	}
 
 	var dockable aiChatDockable
-	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Phase 2", resolution, aiPhase2OnlyActionPlan)
+	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Step 6: Equipment", resolution, aiEquipmentOnlyActionPlan)
 	if err != nil {
 		t.Fatalf("expected equipment-only unresolved items to be allowed, got %v", err)
 	}
@@ -450,7 +419,7 @@ func TestExecuteLocalCorrectionLoopIgnoresUnrelatedCorrectionEntries(t *testing.
 	}
 
 	var dockable aiChatDockable
-	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Phase 1", resolution, aiPhase1OnlyActionPlan)
+	resolved, err := dockable.executeLocalCorrectionLoop("http://local", "test-model", "system", "Step 4: Advantages & Perks", resolution, aiAdvantagesOnlyActionPlan)
 	if err == nil {
 		t.Fatal("expected hard-stop error when unrelated correction entries are ignored and the original retry item remains unresolved")
 	}
@@ -461,7 +430,7 @@ func TestExecuteLocalCorrectionLoopIgnoresUnrelatedCorrectionEntries(t *testing.
 		t.Fatalf("expected unrelated correction entries to be excluded, got %#v", resolved.RetryItems)
 	}
 	joinedWarnings := strings.Join(resolved.Warnings, "\n")
-	if !strings.Contains(joinedWarnings, "ignored 3 unrelated correction entries") {
+	if !strings.Contains(joinedWarnings, "ignored 1 unrelated correction entries") {
 		t.Fatalf("expected unrelated correction warning, got %#v", resolved.Warnings)
 	}
 	if !strings.Contains(joinedWarnings, "made no progress and was stopped") {

@@ -26,16 +26,6 @@ var aiAutoBalanceFallbackSkillNames = []string{
 const aiLocalCorrectionMaxPasses = 2
 
 var (
-	aiPhase1RecommendedTermLimits = map[aiLibraryCategory]int{
-		aiLibraryCategoryAdvantage:    8,
-		aiLibraryCategoryDisadvantage: 8,
-		aiLibraryCategoryQuirk:        6,
-	}
-	aiPhase2RecommendedTermLimits = map[aiLibraryCategory]int{
-		aiLibraryCategorySkill:     12,
-		aiLibraryCategorySpell:     8,
-		aiLibraryCategoryEquipment: 8,
-	}
 	aiLocalCorrectionQueryModel = func(d *aiChatDockable, endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
 		return d.queryLocalModel(endpoint, model, messages, schema)
 	}
@@ -1002,24 +992,6 @@ func aiLocalPhaseMessage(label, responseText string) string {
 	return fmt.Sprintf("%s\n%s", label, responseText)
 }
 
-func aiPhase1OnlyActionPlan(plan aiActionPlan) aiActionPlan {
-	return aiActionPlan{
-		Profile:       plan.Profile,
-		Attributes:    append([]aiAttributeAction(nil), plan.Attributes...),
-		Advantages:    append([]aiNamedAction(nil), plan.Advantages...),
-		Disadvantages: append([]aiNamedAction(nil), plan.Disadvantages...),
-		Quirks:        append([]aiNamedAction(nil), plan.Quirks...),
-	}
-}
-
-func aiPhase2OnlyActionPlan(plan aiActionPlan) aiActionPlan {
-	return aiActionPlan{
-		Skills:    append([]aiSkillAction(nil), plan.Skills...),
-		Spells:    append([]aiSkillAction(nil), plan.Spells...),
-		Equipment: append([]aiNamedAction(nil), plan.Equipment...),
-	}
-}
-
 func aiSnapSkillPointsInPlan(plan aiActionPlan) aiActionPlan {
 	if len(plan.Skills) == 0 && len(plan.Spells) == 0 {
 		return plan
@@ -1692,7 +1664,7 @@ func (d *aiChatDockable) executeLocalGenerationPipeline(endpoint, model, origina
 	})
 }
 
-func (d *aiChatDockable) executeLocalThreePhaseGeneration(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
+func (d *aiChatDockable) executeLocalBuildPipeline(endpoint, model, originalPrompt string, params aiCharacterRequestParams) {
 	d.executeLocalGenerationPipeline(endpoint, model, originalPrompt, params)
 }
 

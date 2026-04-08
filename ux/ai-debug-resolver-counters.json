@@ -3,8 +3,8 @@
     {
       "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
       "kind": "correction-pass",
-      "count": 45,
-      "last_seen": "2026-04-05T23:29:02.0434813Z",
+      "count": 47,
+      "last_seen": "2026-04-08T19:21:41.2930192Z",
       "fields": [
         "phase=\"Phase 1\"",
         "pass=1",
@@ -16,8 +16,8 @@
     {
       "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fresult=hard-stop\u001fremaining=1",
       "kind": "correction-pass",
-      "count": 45,
-      "last_seen": "2026-04-05T23:29:02.0450147Z",
+      "count": 47,
+      "last_seen": "2026-04-08T19:21:41.2940183Z",
       "fields": [
         "phase=\"Phase 1\"",
         "result=hard-stop",
@@ -27,8 +27,8 @@
     {
       "signature": "correction-pass\u001fphase=\"Phase 1\"\u001fpass=1\u001fresult=progress\u001fbefore=1\u001fafter=0",
       "kind": "correction-pass",
-      "count": 25,
-      "last_seen": "2026-04-05T23:29:02.0389446Z",
+      "count": 26,
+      "last_seen": "2026-04-08T19:21:41.2895192Z",
       "fields": [
         "phase=\"Phase 1\"",
         "pass=1",
@@ -40,10 +40,60 @@
     {
       "signature": "correction-pass\u001fphase=\"Phase 2\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
       "kind": "correction-pass",
-      "count": 25,
-      "last_seen": "2026-04-05T23:29:02.0414449Z",
+      "count": 26,
+      "last_seen": "2026-04-08T19:21:41.2920187Z",
       "fields": [
         "phase=\"Phase 2\"",
+        "pass=1",
+        "result=no-progress",
+        "before=1",
+        "after=1"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Step 4: Advantages \u0026 Perks\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
+      "kind": "correction-pass",
+      "count": 6,
+      "last_seen": "2026-04-08T19:36:15.5262599Z",
+      "fields": [
+        "phase=\"Step 4: Advantages \u0026 Perks\"",
+        "pass=1",
+        "result=no-progress",
+        "before=1",
+        "after=1"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Step 4: Advantages \u0026 Perks\"\u001fresult=hard-stop\u001fremaining=1",
+      "kind": "correction-pass",
+      "count": 6,
+      "last_seen": "2026-04-08T19:36:15.5267698Z",
+      "fields": [
+        "phase=\"Step 4: Advantages \u0026 Perks\"",
+        "result=hard-stop",
+        "remaining=1"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Step 4: Advantages \u0026 Perks\"\u001fpass=1\u001fresult=progress\u001fbefore=1\u001fafter=0",
+      "kind": "correction-pass",
+      "count": 3,
+      "last_seen": "2026-04-08T19:36:15.5227254Z",
+      "fields": [
+        "phase=\"Step 4: Advantages \u0026 Perks\"",
+        "pass=1",
+        "result=progress",
+        "before=1",
+        "after=0"
+      ]
+    },
+    {
+      "signature": "correction-pass\u001fphase=\"Step 6: Equipment\"\u001fpass=1\u001fresult=no-progress\u001fbefore=1\u001fafter=1",
+      "kind": "correction-pass",
+      "count": 3,
+      "last_seen": "2026-04-08T19:36:15.5257554Z",
+      "fields": [
+        "phase=\"Step 6: Equipment\"",
         "pass=1",
         "result=no-progress",
         "before=1",

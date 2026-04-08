@@ -99,6 +99,32 @@ func TestAIParseLocalBaselineDraftProfileResponseAcceptsTitleCaseKeys(t *testing
 	}
 }
 
+func TestAIValidateLocalBaselineCollectionResponseTextRejectsCrossSystemDraftProfile(t *testing.T) {
+	responseText := `{"status":"incomplete","draft_profile":{"name":"Wong Jick","class":"Assassin","race":"Human","ac":"10","hp":"12","saving_throws":["Dex"],"features":["Sneak Attack"],"skills":[]}}`
+	err := aiValidateLocalBaselineCollectionResponseText(responseText)
+	if err == nil {
+		t.Fatal("expected cross-system baseline payload to be rejected")
+	}
+	message := err.Error()
+	checks := []string{"cross-system keys", "class", "ac", "saving_throws", "non-baseline keys", "skills"}
+	for _, check := range checks {
+		if !strings.Contains(message, check) {
+			t.Fatalf("expected validation error to mention %q, got %q", check, message)
+		}
+	}
+}
+
+func TestAIValidateLocalBaselineCollectionResponseTextRejectsCharacterSheetPayload(t *testing.T) {
+	responseText := `{"status":"complete","character_sheet":{"name":"Wong Jick","attributes":{"ST":11}}}`
+	err := aiValidateLocalBaselineCollectionResponseText(responseText)
+	if err == nil {
+		t.Fatal("expected full character-sheet payload to be rejected during baseline collection")
+	}
+	if !strings.Contains(err.Error(), "full character-sheet payload") {
+		t.Fatalf("expected full character-sheet validation error, got %q", err.Error())
+	}
+}
+
 func TestParseAIActionPlanAcceptsWrappedCharacterSheet(t *testing.T) {
 	var d aiChatDockable
 	responseText := `{"status":"complete","character_sheet":{"Name":"Bubba Jenkins","Title":"Meth-Head","TL":8,"Attributes":{"ST":11,"DX":12},"Advantages":["Temperature Tolerance"],"Disadvantages":["Bad Reputation"],"Skills":{"Driving (Automobile)":12},"Equipment":["Knife"]}}`

@@ -119,7 +119,7 @@ func aiResolverMarkdownEscape(text string) string {
 }
 
 func aiTailResolverDebugLog(limit int) []string {
-	data, err := os.ReadFile(aiResolverDebugLogFile)
+	data, err := os.ReadFile(aiResolverTelemetryPath(aiResolverDebugLogFile))
 	if err != nil {
 		return nil
 	}

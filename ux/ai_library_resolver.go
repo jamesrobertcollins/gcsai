@@ -15,6 +15,7 @@ import (
 	"github.com/richardwilkes/gcs/v5/model/gurps"
 	"github.com/richardwilkes/gcs/v5/model/nameable"
 	"github.com/richardwilkes/toolbox/v2/tid"
+	"github.com/richardwilkes/toolbox/v2/xos"
 )
 
 type aiLibraryCategory string
@@ -46,6 +47,7 @@ var (
 	aiResolverDebugLogLock       sync.Mutex
 	aiResolverDebugLogWriter     = aiAppendResolverDebugLog
 	aiResolverDebugCounterWriter = aiUpdateResolverDebugCounters
+	aiResolverTelemetryDir       string
 	aiNameableTemplatePattern    = regexp.MustCompile(`@[^@]+@`)
 	aiConceptSearchStopWords     = map[string]struct{}{
 		"a": {}, "an": {}, "and": {}, "at": {}, "for": {}, "from": {}, "in": {}, "into": {},
@@ -239,12 +241,22 @@ func aiCategorySingular(category string) string {
 	}
 }
 
+func aiResolverTelemetryPath(fileName string) string {
+	baseDir := strings.TrimSpace(aiResolverTelemetryDir)
+	if baseDir == "" {
+		baseDir = filepath.Join(xos.AppDataDir(true), "ai-telemetry")
+	}
+	return filepath.Join(baseDir, fileName)
+}
+
 func aiAppendResolverDebugLog(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return
 	}
-	file, err := os.OpenFile(aiResolverDebugLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	path := aiResolverTelemetryPath(aiResolverDebugLogFile)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
 	}
@@ -326,7 +338,7 @@ func aiApplyResolverDebugCounterEvent(state *aiResolverDebugCounterState, kind s
 
 func aiLoadResolverDebugCounterState() aiResolverDebugCounterState {
 	var state aiResolverDebugCounterState
-	data, err := os.ReadFile(aiResolverDebugSummaryFile)
+	data, err := os.ReadFile(aiResolverTelemetryPath(aiResolverDebugSummaryFile))
 	if err != nil {
 		return state
 	}
@@ -342,7 +354,9 @@ func aiSaveResolverDebugCounterState(state aiResolverDebugCounterState) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(aiResolverDebugSummaryFile, data, 0o644)
+	path := aiResolverTelemetryPath(aiResolverDebugSummaryFile)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.WriteFile(path, data, 0o644)
 }
 
 func aiUpdateResolverDebugCounters(kind string, fields []string) {
@@ -353,7 +367,7 @@ func aiUpdateResolverDebugCounters(kind string, fields []string) {
 
 func aiClearResolverDebugTelemetry() error {
 	var failures []string
-	for _, one := range []string{aiResolverDebugLogFile, aiResolverDebugSummaryFile} {
+	for _, one := range []string{aiResolverTelemetryPath(aiResolverDebugLogFile), aiResolverTelemetryPath(aiResolverDebugSummaryFile)} {
 		if err := os.Remove(one); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, fmt.Sprintf("%s: %v", one, err))
 		}

@@ -27,6 +27,21 @@ type aiLocalChatMessage struct {
 	Content string `json:"content"`
 }
 
+type aiLocalChatResponse struct {
+	Error   string `json:"error,omitempty"`
+	Message *struct {
+		Role    string `json:"role,omitempty"`
+		Content string `json:"content,omitempty"`
+	} `json:"message,omitempty"`
+	Response string `json:"response,omitempty"`
+	Choices  []struct {
+		Text    string `json:"text,omitempty"`
+		Message struct {
+			Content string `json:"content,omitempty"`
+		} `json:"message,omitempty"`
+	} `json:"choices,omitempty"`
+}
+
 func aiNormalizeLocalRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "model":
@@ -67,7 +82,27 @@ func buildLocalStatelessMessages(systemPrompt, userPrompt string) []aiLocalChatM
 	}
 }
 
-func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
+func aiExtractLocalResponseText(result aiLocalChatResponse) (string, error) {
+	if result.Error != "" {
+		return "", fmt.Errorf(i18n.Text("Local AI server error: %s"), result.Error)
+	}
+	responseText := strings.TrimSpace(result.Response)
+	if responseText == "" && result.Message != nil {
+		responseText = strings.TrimSpace(result.Message.Content)
+	}
+	if responseText == "" && len(result.Choices) > 0 {
+		responseText = strings.TrimSpace(result.Choices[0].Text)
+		if responseText == "" {
+			responseText = strings.TrimSpace(result.Choices[0].Message.Content)
+		}
+	}
+	if responseText == "" {
+		return "", errors.New(i18n.Text("Local AI server returned no text."))
+	}
+	return aiNormalizeExternalText("local.response", responseText), nil
+}
+
+func aiQueryLocalModelText(endpoint, model string, messages []aiLocalChatMessage, schema any, debugf func(string)) (string, error) {
 	reqBody := struct {
 		Model    string               `json:"model"`
 		Messages []aiLocalChatMessage `json:"messages"`
@@ -88,10 +123,9 @@ func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLo
 
 	paths := []string{"/api/chat", "/api/generate"}
 	for _, path := range paths {
-		debugPath := endpoint + path
-		unison.InvokeTask(func() {
-			d.addMessage("Debug", fmt.Sprintf("POST %s (model=%s)", debugPath, model))
-		})
+		if debugf != nil {
+			debugf(endpoint + path)
+		}
 		resp, postErr := http.Post(endpoint+path, "application/json", bytes.NewReader(body)) //nolint:noctx
 		if postErr != nil {
 			return "", fmt.Errorf(i18n.Text("Error querying local AI server: %v"), postErr)
@@ -106,43 +140,21 @@ func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLo
 			return "", fmt.Errorf(i18n.Text("Local AI server returned %d: %s"), resp.StatusCode, strings.TrimSpace(string(responseBody)))
 		}
 
-		var result struct {
-			Error   string `json:"error,omitempty"`
-			Message *struct {
-				Role    string `json:"role,omitempty"`
-				Content string `json:"content,omitempty"`
-			} `json:"message,omitempty"`
-			Response string `json:"response,omitempty"`
-			Choices  []struct {
-				Text    string `json:"text,omitempty"`
-				Message struct {
-					Content string `json:"content,omitempty"`
-				} `json:"message,omitempty"`
-			} `json:"choices,omitempty"`
-		}
+		var result aiLocalChatResponse
 		if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 			return "", fmt.Errorf(i18n.Text("Error parsing local AI response: %v"), decodeErr)
 		}
-		if result.Error != "" {
-			return "", fmt.Errorf(i18n.Text("Local AI server error: %s"), result.Error)
-		}
-
-		responseText := strings.TrimSpace(result.Response)
-		if responseText == "" && result.Message != nil {
-			responseText = strings.TrimSpace(result.Message.Content)
-		}
-		if responseText == "" && len(result.Choices) > 0 {
-			responseText = strings.TrimSpace(result.Choices[0].Text)
-			if responseText == "" {
-				responseText = strings.TrimSpace(result.Choices[0].Message.Content)
-			}
-		}
-		if responseText == "" {
-			return "", errors.New(i18n.Text("Local AI server returned no text."))
-		}
-		return aiNormalizeExternalText("local.response", responseText), nil
+		return aiExtractLocalResponseText(result)
 	}
 	return "", errors.New(i18n.Text("Local AI server did not respond."))
+}
+
+func (d *aiChatDockable) queryLocalModel(endpoint, model string, messages []aiLocalChatMessage, schema any) (string, error) {
+	return aiQueryLocalModelText(endpoint, model, messages, schema, func(debugPath string) {
+		unison.InvokeTask(func() {
+			d.addMessage("Debug", fmt.Sprintf("POST %s (model=%s)", debugPath, model))
+		})
+	})
 }
 
 func (d *aiChatDockable) resolveAIActionPlanResult(plan aiActionPlan) (aiPlanResolutionResult, error) {

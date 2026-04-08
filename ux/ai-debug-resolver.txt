@@ -138,3 +138,27 @@
 2026-04-05T23:29:02.0424498Z | correction-pass | phase="Phase 2" | pass=1 | result=no-progress | before=1 | after=1
 2026-04-05T23:29:02.044508Z | correction-pass | phase="Phase 1" | pass=1 | result=no-progress | before=1 | after=1
 2026-04-05T23:29:02.0455143Z | correction-pass | phase="Phase 1" | result=hard-stop | remaining=1
+2026-04-08T19:21:41.2900202Z | correction-pass | phase="Phase 1" | pass=1 | result=progress | before=1 | after=0
+2026-04-08T19:21:41.2910197Z | correction-pass | phase="Phase 1" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:21:41.2915191Z | correction-pass | phase="Phase 1" | result=hard-stop | remaining=1
+2026-04-08T19:21:41.2925189Z | correction-pass | phase="Phase 2" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:21:41.2935204Z | correction-pass | phase="Phase 1" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:21:41.2945188Z | correction-pass | phase="Phase 1" | result=hard-stop | remaining=1
+2026-04-08T19:34:54.2382851Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=progress | before=1 | after=0
+2026-04-08T19:34:54.2392848Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:34:54.2402835Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1
+2026-04-08T19:34:54.2412862Z | correction-pass | phase="Step 6: Equipment" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:34:54.2422834Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:34:54.2427832Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1
+2026-04-08T19:35:20.2603654Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=progress | before=1 | after=0
+2026-04-08T19:35:20.2613675Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:35:20.2618675Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1
+2026-04-08T19:35:20.2628655Z | correction-pass | phase="Step 6: Equipment" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:35:20.2638662Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:35:20.2643667Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1
+2026-04-08T19:36:15.5232236Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=progress | before=1 | after=0
+2026-04-08T19:36:15.5242249Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:36:15.5247306Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1
+2026-04-08T19:36:15.5262599Z | correction-pass | phase="Step 6: Equipment" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:36:15.5267698Z | correction-pass | phase="Step 4: Advantages & Perks" | pass=1 | result=no-progress | before=1 | after=1
+2026-04-08T19:36:15.5277783Z | correction-pass | phase="Step 4: Advantages & Perks" | result=hard-stop | remaining=1

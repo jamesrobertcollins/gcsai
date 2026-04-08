@@ -1487,6 +1487,85 @@ func aiDraftProfileReadyForApproval(status string, profile aiDraftProfile) bool 
 	return false
 }
 
+var (
+	aiBaselineUnexpectedBuildKeys = map[string]struct{}{
+		"attributes":    {},
+		"advantages":    {},
+		"disadvantages": {},
+		"quirks":        {},
+		"skills":        {},
+		"spells":        {},
+		"equipment":     {},
+		"spend_all_cp":  {},
+	}
+	aiBaselineCrossSystemKeys = map[string]struct{}{
+		"class":         {},
+		"race":          {},
+		"level":         {},
+		"hp":            {},
+		"ac":            {},
+		"saving_throws": {},
+		"proficiencies": {},
+		"features":      {},
+	}
+)
+
+func aiMatchingDraftProfileKeys(section map[string]any, candidates map[string]struct{}) []string {
+	if len(section) == 0 || len(candidates) == 0 {
+		return nil
+	}
+	matched := make([]string, 0, len(section))
+	for key := range section {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if _, ok := candidates[normalized]; ok {
+			matched = append(matched, normalized)
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	sort.Strings(matched)
+	return matched
+}
+
+func aiValidateLocalBaselineCollectionResponseText(text string) error {
+	for _, payload := range extractJSONPayloads(text) {
+		cleaned := sanitizeAIJSONPayload(payload)
+		if cleaned == "" {
+			continue
+		}
+		var raw map[string]any
+		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
+			if err := json.Unmarshal(normalized, &raw); err != nil {
+				continue
+			}
+		} else if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
+			continue
+		}
+		if aiMapStringAny(raw["character_sheet"]) != nil || aiMapStringAny(raw["character_profile"]) != nil {
+			return fmt.Errorf("local baseline collection rejected the model response because it returned a full character-sheet payload instead of draft_profile JSON")
+		}
+		draftProfile := aiMapStringAny(raw["draft_profile"])
+		if draftProfile == nil {
+			continue
+		}
+		unexpectedBuildKeys := aiMatchingDraftProfileKeys(draftProfile, aiBaselineUnexpectedBuildKeys)
+		crossSystemKeys := aiMatchingDraftProfileKeys(draftProfile, aiBaselineCrossSystemKeys)
+		if len(unexpectedBuildKeys) == 0 && len(crossSystemKeys) == 0 {
+			continue
+		}
+		parts := make([]string, 0, 2)
+		if len(unexpectedBuildKeys) != 0 {
+			parts = append(parts, fmt.Sprintf("non-baseline keys: %s", strings.Join(unexpectedBuildKeys, ", ")))
+		}
+		if len(crossSystemKeys) != 0 {
+			parts = append(parts, fmt.Sprintf("cross-system keys: %s", strings.Join(crossSystemKeys, ", ")))
+		}
+		return fmt.Errorf("local baseline collection rejected the model response because draft_profile contained %s. The baseline step must return only profile fields such as character_concept, name, title, tech_level, cp_limit, starting_wealth, and world_setting", strings.Join(parts, "; "))
+	}
+	return nil
+}
+
 func aiStringFromValue(value any) string {
 	switch typed := value.(type) {
 	case string:
@@ -3739,7 +3818,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 					unison.InvokeTask(func() {
 						d.addMessage("AI", i18n.Text("Baseline approved. Starting character generation."))
 					})
-					d.executeLocalThreePhaseGeneration(endpoint, model, session.OriginalRequest, session.Params)
+					d.executeLocalBuildPipeline(endpoint, model, session.OriginalRequest, session.Params)
 					return
 				}
 				unison.InvokeTask(func() {
@@ -3764,6 +3843,13 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 				responseStr, err := d.queryLocalModel(endpoint, model, messages, aiLocalBaselineDraftProfileJSONSchema())
 				if err != nil {
 					unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
+					return
+				}
+				if validationErr := aiValidateLocalBaselineCollectionResponseText(responseStr); validationErr != nil {
+					unison.InvokeTask(func() {
+						d.addMessage("AI", responseStr)
+						d.addMessage("AI", validationErr.Error())
+					})
 					return
 				}
 				if response, ok := aiParseLocalBaselineDraftProfileResponse(responseStr); ok {
@@ -3795,7 +3881,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 		}
 
 		if prepared.IsInitialBuild {
-			d.executeLocalThreePhaseGeneration(endpoint, model, prompt, prepared.BuildParams)
+			d.executeLocalBuildPipeline(endpoint, model, prompt, prepared.BuildParams)
 			return
 		}
 
