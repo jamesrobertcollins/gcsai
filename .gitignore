@@ -16,3 +16,6 @@
 /test.exe
 /ai-debug-skills.txt
 /ai-debug-system-prompt.txt
+/ai-model/*
+ai_model/Modelfile
+ai_model/llama-3.1-8b.Q4_K_M.gguf
