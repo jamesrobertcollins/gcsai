@@ -183,6 +183,24 @@ func TestAIBuildContinuationUserPrompt(t *testing.T) {
 	}
 }
 
+func TestAIBuildContinuationSystemPromptIncludesStateContract(t *testing.T) {
+	var d aiChatDockable
+	prompt := d.aiBuildContinuationSystemPrompt("add advantages", aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50})
+	checks := []string{
+		"CURRENT STATE: CONTINUATION_UPDATE",
+		"TASK: Apply the latest user instruction as an incremental update to the in-progress character sheet.",
+		"ALLOWED FIELDS: profile, attributes, advantages, disadvantages, quirks, skills, spells, equipment, spend_all_cp.",
+		"STRICT CONSTRAINT: Return only changed fields for this turn.",
+		"continuing an in-progress GURPS Fourth Edition character build",
+		"Return only the new or changed JSON needed for this turn.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("expected continuation system prompt to contain %q, got %q", check, prompt)
+		}
+	}
+}
+
 func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 	prompt := aiLocalBaselineGatheringSystemPrompt(aiDraftProfile{
 		CharacterConcept: aiFlexibleString("Noir Detective"),
@@ -190,6 +208,9 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 		CPLimit:          aiFlexibleString("150"),
 	})
 	checks := []string{
+		"CURRENT STATE: BASELINE_COLLECTION",
+		"TASK: Extract user concept into a profile.",
+		"ALLOWED FIELDS: status, draft_profile(character_concept, name, age, tech_level, cp_limit).",
 		"Your goal is to collect character profile data from the user",
 		"Character Concept (e.g., Marine Mechanic, Noir Detective)",
 		"Ask the user for missing details, or ask if they want them randomized/left blank.",
@@ -202,6 +223,25 @@ func TestAILocalBaselineGatheringSystemPrompt(t *testing.T) {
 	for _, check := range checks {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("expected gathering prompt to contain %q, got %q", check, prompt)
+		}
+	}
+}
+
+func TestAILocalStatePromptDictionaryContainsExpectedStates(t *testing.T) {
+	checks := map[string]string{
+		aiLocalPromptStateBaseline:     "CURRENT STATE: BASELINE_COLLECTION",
+		aiLocalPromptStateBlueprint:    "CURRENT STATE: STEP_1_BLUEPRINT",
+		aiLocalPromptStateStory:        "CURRENT STATE: STEP_2_STORY_ENGINE",
+		aiLocalPromptStateAttributes:   "CURRENT STATE: STEP_3_ATTRIBUTES",
+		aiLocalPromptStateAdvantages:   "CURRENT STATE: STEP_4_ADVANTAGES",
+		aiLocalPromptStateSkills:       "CURRENT STATE: STEP_5_SKILLS",
+		aiLocalPromptStateEquipment:    "CURRENT STATE: STEP_6_EQUIPMENT",
+		aiLocalPromptStateContinuation: "CURRENT STATE: CONTINUATION_UPDATE",
+	}
+	for state, expected := range checks {
+		prompt := aiLocalStatePrompt(state)
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected state prompt %q to contain %q, got %q", state, expected, prompt)
 		}
 	}
 }
@@ -361,8 +401,14 @@ func TestAIPrepareAIRequestUsesBuildContinuationSession(t *testing.T) {
 	var d aiChatDockable
 	d.buildSession = &aiBuildSessionContext{State: aiBuildSessionStateGenerating, Params: aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "mechanic", DisadvantageLimit: 50}}
 	prepared := d.prepareAIRequest("add advantages")
+	if !strings.Contains(prepared.SystemPrompt, "CURRENT STATE: CONTINUATION_UPDATE") {
+		t.Fatalf("expected continuation state contract, got %q", prepared.SystemPrompt)
+	}
 	if !strings.Contains(prepared.SystemPrompt, "continuing an in-progress GURPS Fourth Edition character build") {
 		t.Fatalf("expected continuation system prompt, got %q", prepared.SystemPrompt)
+	}
+	if !strings.Contains(prepared.SystemPrompt, "Return only changed fields for this turn") {
+		t.Fatalf("expected continuation prompt to preserve incremental output contract, got %q", prepared.SystemPrompt)
 	}
 	if !strings.Contains(prepared.SystemPrompt, "40-50%") {
 		t.Fatalf("expected continuation prompt to preserve budget guidance, got %q", prepared.SystemPrompt)

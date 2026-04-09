@@ -130,6 +130,9 @@ func TestAIBuildLocalEquipmentPrompts(t *testing.T) {
 	)
 	combined := systemPrompt + "\n" + userPrompt
 	checks := []string{
+		"CURRENT STATE: STEP_6_EQUIPMENT",
+		"TASK: Generate equipment.",
+		"ALLOWED FIELDS: equipment.",
 		"deterministic GURPS 4e equipment generator",
 		"You may output ONLY the \"equipment\" field.",
 		"You have exactly $20,000 to spend on mundane equipment, weapons, and armor.",
@@ -143,6 +146,58 @@ func TestAIBuildLocalEquipmentPrompts(t *testing.T) {
 			t.Fatalf("expected equipment prompts to contain %q, got %q", check, combined)
 		}
 	}
+}
+
+func TestAIBuildLocalStepPromptsIncludeStateContracts(t *testing.T) {
+	params := aiCharacterRequestParams{TotalCP: 150, TechLevel: "8", Concept: "marine mechanic", StartingWealth: 20000, DisadvantageLimit: 50}
+	themes := []string{"Marine", "Mechanic", "Veteran"}
+	vocabulary := "Thematic Canonical GURPS Vocabulary:\n- Skills: Mechanic (Automobile)\n- Advantages: High Pain Threshold"
+	summary := "Current character sheet context: skills and advantages already applied."
+	budget := GenerationBudget{TotalCP: 150, Attributes: 60, Advantages: 30, CoreSkills: 38, BackgroundSkills: 22}
+
+	checks := []struct {
+		name     string
+		prompt   string
+		expected []string
+	}{
+		{
+			name:     "blueprint",
+			prompt:   stateSystemPrompt(aiBuildLocalBlueprintPrompts("Build a TL8 marine mechanic.", params)),
+			expected: []string{"CURRENT STATE: STEP_1_BLUEPRINT", "ALLOWED FIELDS: themes, budget_percentages(attributes, advantages, core_skills, background_skills)."},
+		},
+		{
+			name:     "story",
+			prompt:   stateSystemPrompt(aiBuildLocalStoryEnginePrompts("Build a TL8 marine mechanic.", params, themes, vocabulary)),
+			expected: []string{"CURRENT STATE: STEP_2_STORY_ENGINE", "ALLOWED FIELDS: disadvantages, quirks."},
+		},
+		{
+			name:     "attributes",
+			prompt:   stateSystemPrompt(aiBuildLocalAttributePrompts("Build a TL8 marine mechanic.", params, themes, 60, summary)),
+			expected: []string{"CURRENT STATE: STEP_3_ATTRIBUTES", "ALLOWED FIELDS: attributes(ST, DX, IQ, HT)."},
+		},
+		{
+			name:     "advantages",
+			prompt:   stateSystemPrompt(aiBuildLocalAdvantagesPrompts("Build a TL8 marine mechanic.", params, themes, 30, summary, vocabulary)),
+			expected: []string{"CURRENT STATE: STEP_4_ADVANTAGES", "ALLOWED FIELDS: advantages."},
+		},
+		{
+			name:     "skills",
+			prompt:   stateSystemPrompt(aiBuildLocalSkillsPrompts("Build a TL8 marine mechanic.", params, themes, budget, summary, vocabulary)),
+			expected: []string{"CURRENT STATE: STEP_5_SKILLS", "STRICT CONSTRAINT: Do not use D&D terminology."},
+		},
+	}
+
+	for _, check := range checks {
+		for _, expected := range check.expected {
+			if !strings.Contains(check.prompt, expected) {
+				t.Fatalf("expected %s prompt to contain %q, got %q", check.name, expected, check.prompt)
+			}
+		}
+	}
+}
+
+func stateSystemPrompt(systemPrompt, _ string) string {
+	return systemPrompt
 }
 
 func TestAIAdjustedStartingWealthForEntity(t *testing.T) {

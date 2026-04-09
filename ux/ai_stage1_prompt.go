@@ -24,7 +24,33 @@ const (
 	aiBuildSessionStateGathering       = "Gathering"
 	aiBuildSessionStatePendingApproval = "PendingApproval"
 	aiBuildSessionStateGenerating      = "Generating"
+	aiLocalPromptStateBaseline         = "step_0_baseline"
+	aiLocalPromptStateBlueprint        = "step_1_blueprint"
+	aiLocalPromptStateStory            = "step_2_story"
+	aiLocalPromptStateAttributes       = "step_3_attributes"
+	aiLocalPromptStateAdvantages       = "step_4_advantages"
+	aiLocalPromptStateSkills           = "step_5_skills"
+	aiLocalPromptStateEquipment        = "step_6_equipment"
+	aiLocalPromptStateContinuation     = "continuation_update"
 )
+
+var aiLocalStatePrompts = map[string]string{
+	aiLocalPromptStateBaseline:     "You are a GURPS 4e Character Architect backend. CURRENT STATE: BASELINE_COLLECTION. TASK: Extract user concept into a profile. ALLOWED FIELDS: status, draft_profile(character_concept, name, age, tech_level, cp_limit). DO NOT output stats, attributes, or full sheets.",
+	aiLocalPromptStateBlueprint:    "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_1_BLUEPRINT. TASK: Establish themes and point distribution based on the draft profile. ALLOWED FIELDS: themes, budget_percentages(attributes, advantages, core_skills, background_skills).",
+	aiLocalPromptStateStory:        "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_2_STORY_ENGINE. TASK: Generate disadvantages and quirks. ALLOWED FIELDS: disadvantages, quirks.",
+	aiLocalPromptStateAttributes:   "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_3_ATTRIBUTES. TASK: Generate core attributes for the concept. ALLOWED FIELDS: attributes(ST, DX, IQ, HT).",
+	aiLocalPromptStateAdvantages:   "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_4_ADVANTAGES. TASK: Generate advantages. ALLOWED FIELDS: advantages.",
+	aiLocalPromptStateSkills:       "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_5_SKILLS. TASK: Generate skills. ALLOWED FIELDS: skills. STRICT CONSTRAINT: Do not use D&D terminology.",
+	aiLocalPromptStateEquipment:    "You are a GURPS 4e Character Architect backend. CURRENT STATE: STEP_6_EQUIPMENT. TASK: Generate equipment. ALLOWED FIELDS: equipment.",
+	aiLocalPromptStateContinuation: "You are a GURPS 4e Character Architect backend. CURRENT STATE: CONTINUATION_UPDATE. TASK: Apply the latest user instruction as an incremental update to the in-progress character sheet. ALLOWED FIELDS: profile, attributes, advantages, disadvantages, quirks, skills, spells, equipment, spend_all_cp. STRICT CONSTRAINT: Return only changed fields for this turn.",
+}
+
+func aiLocalStatePrompt(state string) string {
+	if prompt, ok := aiLocalStatePrompts[state]; ok {
+		return prompt
+	}
+	return "You are a GURPS 4e Character Architect backend."
+}
 
 type aiDraftProfile struct {
 	CharacterConcept aiFlexibleString `json:"character_concept,omitempty"`
@@ -454,7 +480,10 @@ func aiShouldUseBuildContinuationPrompt(request string) bool {
 }
 
 func aiLocalBaselineGatheringSystemPrompt(draft aiDraftProfile) string {
-	return strings.TrimSpace(fmt.Sprintf(`You are a GURPS 4e Game Master. Your goal is to collect character profile data from the user. You need: Character Concept (e.g., Marine Mechanic, Noir Detective), Name, Title, Age, Weight, Height, Eye/Hair Color, Religion, TL, CP limit, Starting Wealth, and Game setting. Ask the user for missing details, or ask if they want them randomized/left blank. If Starting Wealth is unknown, default to the standard GURPS wealth for the agreed TL. Do NOT generate the character sheet yet.
+	return strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are a GURPS 4e Game Master. Your goal is to collect character profile data from the user. You need: Character Concept (e.g., Marine Mechanic, Noir Detective), Name, Title, Age, Weight, Height, Eye/Hair Color, Religion, TL, CP limit, Starting Wealth, and Game setting. Ask the user for missing details, or ask if they want them randomized/left blank. If Starting Wealth is unknown, default to the standard GURPS wealth for the agreed TL. Do NOT generate the character sheet yet.
 If the user wants a field randomized or left blank, record that choice literally in draft_profile.
 Use machine-readable snake_case keys only inside draft_profile. Do not use display labels such as "Character Concept", "TL", "CP Limit", or "Game Setting".
 If the baseline is still missing information, return exactly one top-level JSON object in this form and nothing else:
@@ -463,7 +492,7 @@ Once you have the required info, return exactly one top-level JSON object in thi
 {"status":"complete","draft_profile":{...}}
 
 Current draft profile:
-%s`, aiFormatDraftProfileForPrompt(draft, true)))
+%s`, aiLocalStatePrompt(aiLocalPromptStateBaseline), aiFormatDraftProfileForPrompt(draft, true)))
 }
 
 func aiLocalBaselineDraftProfileJSONSchema() any {
@@ -710,7 +739,10 @@ func (d *aiChatDockable) aiStage1SystemPrompt(request string) string {
 }
 
 func (d *aiChatDockable) aiBuildContinuationSystemPrompt(_ string, params aiCharacterRequestParams) string {
-	return strings.TrimSpace(fmt.Sprintf(`You are continuing an in-progress GURPS Fourth Edition character build for concept [%s].
+	return strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are continuing an in-progress GURPS Fourth Edition character build for concept [%s].
 
 Target budget: exactly %d CP.
 Tech Level: TL %s.
@@ -746,7 +778,7 @@ If you include JSON, return exactly one top-level JSON object for the entire upd
 Do not split updates across multiple JSON objects.
 Do not include comments inside the JSON.
 Put that JSON object first in the response.
-When responding outside JSON, keep the answer concise, factual, and directly tied to GURPS 4e rules.`, params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, params.DisadvantageLimit, d.currentCharacterSummary()))
+When responding outside JSON, keep the answer concise, factual, and directly tied to GURPS 4e rules.`, aiLocalStatePrompt(aiLocalPromptStateContinuation), params.Concept, params.TotalCP, params.TechLevel, params.DisadvantageLimit, params.DisadvantageLimit, d.currentCharacterSummary()))
 }
 
 func (d *aiChatDockable) aiDefaultCharacterRequestParams(request string) aiCharacterRequestParams {

@@ -322,7 +322,10 @@ func aiEquipmentOnlyActionPlan(plan aiActionPlan) aiActionPlan {
 }
 
 func aiBuildLocalBlueprintPrompts(originalPrompt string, params aiCharacterRequestParams) (systemPrompt, userPrompt string) {
-	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e character-planning function.
+	systemPrompt = strings.TrimSpace(aiLocalStatePrompt(aiLocalPromptStateBlueprint) + `
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e character-planning function.
 Return exactly one top-level JSON object and nothing else.
 Do NOT generate a character sheet, traits, skills, equipment, or attributes.
 Infer exactly 3 core background themes from the approved character concept.
@@ -344,7 +347,10 @@ Generate the Step 1 blueprint now.`, params.Concept, params.TotalCP, originalPro
 }
 
 func aiBuildLocalStoryEnginePrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, vocabulary string) (systemPrompt, userPrompt string) {
-	systemPrompt = strings.TrimSpace(`You are a deterministic GURPS 4e disadvantage and quirk generator.
+	systemPrompt = strings.TrimSpace(aiLocalStatePrompt(aiLocalPromptStateStory) + `
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e disadvantage and quirk generator.
 Return exactly one top-level JSON object and nothing else.
 You may output ONLY these JSON fields:
 - disadvantages
@@ -371,7 +377,10 @@ Return exactly one JSON object with disadvantages and quirks only.`, params.Conc
 }
 
 func aiBuildLocalAttributePrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, attributeBucket int, summary string) (systemPrompt, userPrompt string) {
-	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e attribute generator.
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e attribute generator.
 Return exactly one top-level JSON object and nothing else.
 You may output ONLY the "attributes" field.
 Generate attribute and secondary-characteristic adjustments that fit the approved concept.
@@ -379,7 +388,7 @@ Do not include advantages, disadvantages, quirks, skills, equipment, profile, or
 Stay within the attribute bucket supplied by the user prompt.
 
 Current character sheet context:
-%s`, summary))
+%s`, aiLocalStatePrompt(aiLocalPromptStateAttributes), summary))
 	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 3: Attributes.
 Approved character concept: %s
 Core themes: %s
@@ -393,7 +402,10 @@ Return exactly one JSON object with attributes only.`, params.Concept, strings.J
 }
 
 func aiBuildLocalAdvantagesPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, advantageBucket int, summary, vocabulary string) (systemPrompt, userPrompt string) {
-	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e advantages and perks generator.
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e advantages and perks generator.
 Return exactly one top-level JSON object and nothing else.
 You may output ONLY the "advantages" field.
 Generate advantages and perks that fit the approved concept, themes, and current sheet state.
@@ -401,7 +413,7 @@ Do not include attributes, disadvantages, quirks, skills, spells, equipment, pro
 Stay within the advantages bucket supplied by the user prompt.
 
 Current character sheet context:
-%s`, summary))
+%s`, aiLocalStatePrompt(aiLocalPromptStateAdvantages), summary))
 	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 4: Advantages & Perks.
 Approved character concept: %s
 Core themes: %s
@@ -420,7 +432,10 @@ Return exactly one JSON object with advantages only.`, params.Concept, strings.J
 
 func aiBuildLocalSkillsPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, budget GenerationBudget, summary, vocabulary string) (systemPrompt, userPrompt string) {
 	totalSkillBucket := budget.SkillPoints()
-	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e skills and spells generator.
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e skills and spells generator.
 Return exactly one top-level JSON object and nothing else.
 You may output ONLY these JSON fields:
 - skills
@@ -432,7 +447,7 @@ Format TL-dependent skills correctly by appending the Tech Level, for example: C
 Stay within the combined skills bucket supplied by the user prompt.
 
 Current character sheet context:
-%s`, summary))
+%s`, aiLocalStatePrompt(aiLocalPromptStateSkills), summary))
 	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 5: Skills & Spells.
 Approved character concept: %s
 Core themes: %s
@@ -455,7 +470,10 @@ Return exactly one JSON object with skills and spells only.`, params.Concept, st
 
 func aiBuildLocalEquipmentPrompts(originalPrompt string, params aiCharacterRequestParams, themes []string, startingWealth int, summary, vocabulary string) (systemPrompt, userPrompt string) {
 	startingWealthText := aiCurrencyString(startingWealth)
-	systemPrompt = strings.TrimSpace(fmt.Sprintf(`You are a deterministic GURPS 4e equipment generator.
+	systemPrompt = strings.TrimSpace(fmt.Sprintf(`%s
+
+Additional runtime requirements:
+You are a deterministic GURPS 4e equipment generator.
 Return exactly one top-level JSON object and nothing else.
 You may output ONLY the "equipment" field.
 Purchase mundane equipment, weapons, armor, clothing, tools, and travel gear that fit the approved concept, themes, tech level, and current sheet state.
@@ -465,7 +483,7 @@ Do not assign CP values to items unless it is explicitly customized Signature Ge
 Stay within the exact cash limit supplied by the user prompt.
 
 Current character sheet context:
-%s`, summary))
+%s`, aiLocalStatePrompt(aiLocalPromptStateEquipment), summary))
 	userPrompt = strings.TrimSpace(fmt.Sprintf(`Step 6: Equipment.
 Approved character concept: %s
 Core themes: %s
