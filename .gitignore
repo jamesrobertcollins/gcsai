@@ -19,3 +19,10 @@
 /ai-model/*
 ai_model/Modelfile
 ai_model/llama-3.1-8b.Q4_K_M.gguf
+ai_model/mistrained/llama-3.1-8b.Q4_K_M.gguf
+ai_model/mistrained/Modelfile
+ai_model/mistrained/README.md
+ai_model/meta-llama-3.1-8b-instruct.Q4_K_M.gguf
+ai_model/Modelfile_gemini
+.gitignore
+ai_model/Modelfile_generated
