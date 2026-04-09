@@ -1488,6 +1488,23 @@ func aiDraftProfileReadyForApproval(status string, profile aiDraftProfile) bool 
 }
 
 var (
+	aiBaselineAllowedProfileKeys = map[string]struct{}{
+		"character_concept": {},
+		"name":              {},
+		"title":             {},
+		"age":               {},
+		"weight":            {},
+		"height":            {},
+		"eye_color":         {},
+		"hair_color":        {},
+		"size":              {},
+		"religion":          {},
+		"tech_level":        {},
+		"cp_limit":          {},
+		"starting_wealth":   {},
+		"game_limitations":  {},
+		"world_setting":     {},
+	}
 	aiBaselineUnexpectedBuildKeys = map[string]struct{}{
 		"attributes":    {},
 		"advantages":    {},
@@ -1508,7 +1525,34 @@ var (
 		"proficiencies": {},
 		"features":      {},
 	}
+	aiBaselineStateMachineAliasKeys = map[string]string{
+		"name_of_player_character":            "name",
+		"title_of_player_character":           "title",
+		"age_of_player_character":             "age",
+		"weight_of_player_character":          "weight",
+		"height_of_player_character":          "height",
+		"eye_color_of_player_character":       "eye_color",
+		"hair_color_of_player_character":      "hair_color",
+		"size_of_player_character":            "size",
+		"religion_of_player_character":        "religion",
+		"tech_level_of_game_world":            "tech_level",
+		"cp_limit_of_player_character":        "cp_limit",
+		"starting_wealth_of_player_character": "starting_wealth",
+		"game_limitations_of_player_world":    "game_limitations",
+		"world_setting_of_game_world":         "world_setting",
+	}
 )
+
+func aiUsesGURPSStateMachineBaselineShim(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	if index := strings.Index(normalized, ":"); index >= 0 {
+		normalized = normalized[:index]
+	}
+	return normalized == "gurps-state-machine"
+}
 
 func aiMatchingDraftProfileKeys(section map[string]any, candidates map[string]struct{}) []string {
 	if len(section) == 0 || len(candidates) == 0 {
@@ -1528,7 +1572,320 @@ func aiMatchingDraftProfileKeys(section map[string]any, candidates map[string]st
 	return matched
 }
 
+func aiUnknownDraftProfileKeys(section map[string]any) []string {
+	if len(section) == 0 {
+		return nil
+	}
+	unknown := make([]string, 0, len(section))
+	for key := range section {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := aiBaselineAllowedProfileKeys[normalized]; ok {
+			continue
+		}
+		unknown = append(unknown, normalized)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
 func aiValidateLocalBaselineCollectionResponseText(text string) error {
+	return aiValidateLocalBaselineCollectionResponseTextForModel(text, "")
+}
+
+func aiApplyModelSpecificBaselineDraftProfileAliases(model string, raw map[string]any) {
+	if !aiUsesGURPSStateMachineBaselineShim(model) || raw == nil {
+		return
+	}
+	draftProfile := aiMapStringAny(raw["draft_profile"])
+	if draftProfile == nil {
+		return
+	}
+	updates := make(map[string]any)
+	keysToDelete := make([]string, 0)
+	for alias, canonical := range aiBaselineStateMachineAliasKeys {
+		value, ok := draftProfile[alias]
+		if !ok {
+			continue
+		}
+		if _, exists := draftProfile[canonical]; !exists {
+			updates[canonical] = value
+		}
+		keysToDelete = append(keysToDelete, alias)
+	}
+	for key, value := range draftProfile {
+		canonical, decoded, ok := aiDecodeStateMachineEncodedDraftProfileKey(key, value)
+		if !ok {
+			continue
+		}
+		if _, exists := draftProfile[canonical]; exists {
+			keysToDelete = append(keysToDelete, key)
+			continue
+		}
+		if _, exists := updates[canonical]; !exists {
+			updates[canonical] = decoded
+		}
+		keysToDelete = append(keysToDelete, key)
+	}
+	for _, key := range keysToDelete {
+		delete(draftProfile, key)
+	}
+	for key, value := range updates {
+		draftProfile[key] = value
+	}
+	raw["draft_profile"] = draftProfile
+}
+
+func aiDecodeStateMachineEncodedDraftProfileKey(key string, value any) (canonical string, decoded any, ok bool) {
+	for candidate := range aiBaselineAllowedProfileKeys {
+		prefix := candidate + "_"
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(key, prefix)
+		if suffix == "" {
+			continue
+		}
+		switch typed := value.(type) {
+		case bool:
+			if !typed {
+				return "", nil, false
+			}
+			if suffix == "blank" {
+				return candidate, "", true
+			}
+			return candidate, strings.ReplaceAll(suffix, "_", " "), true
+		case string:
+			trimmed := strings.TrimSpace(typed)
+			if trimmed != "" {
+				return candidate, trimmed, true
+			}
+			return candidate, "", true
+		case json.Number:
+			return candidate, typed.String(), true
+		case float64:
+			return candidate, strconv.FormatFloat(typed, 'f', -1, 64), true
+		default:
+			return candidate, strings.ReplaceAll(suffix, "_", " "), true
+		}
+	}
+	return "", nil, false
+}
+
+func aiDecodeStateMachineEncodedNamedAction(section, key string, value any) (aiNamedAction, bool) {
+	prefix := section + "_"
+	if !strings.HasPrefix(key, prefix) {
+		return aiNamedAction{}, false
+	}
+	name := strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(key, prefix), "_", " "))
+	if name == "" {
+		return aiNamedAction{}, false
+	}
+	action := aiNamedAction{Name: aiFlexibleString(name)}
+	switch typed := value.(type) {
+	case bool:
+		if !typed {
+			return aiNamedAction{}, false
+		}
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed != "" {
+			if section == string(aiLibraryCategoryEquipment) {
+				if quantity := aiParseLoosePositiveInt(trimmed); quantity > 0 {
+					action.Quantity = aiFlexibleInt(quantity)
+				} else {
+					action.Description = aiFlexibleString(trimmed)
+				}
+			} else {
+				action.Points = aiFlexibleString(trimmed)
+			}
+		}
+	case json.Number:
+		if section == string(aiLibraryCategoryEquipment) {
+			action.Quantity = aiFlexibleInt(aiParseLoosePositiveInt(typed.String()))
+		} else {
+			action.Points = aiFlexibleString(typed.String())
+		}
+	case float64:
+		if section == string(aiLibraryCategoryEquipment) {
+			action.Quantity = aiFlexibleInt(aiParseLoosePositiveInt(strconv.FormatFloat(typed, 'f', -1, 64)))
+		} else {
+			action.Points = aiFlexibleString(strconv.FormatFloat(typed, 'f', -1, 64))
+		}
+	}
+	return action, true
+}
+
+func aiDecodeStateMachineEncodedSkillAction(section, key string, value any) (aiSkillAction, bool) {
+	prefix := section + "_"
+	if !strings.HasPrefix(key, prefix) {
+		return aiSkillAction{}, false
+	}
+	name := strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(key, prefix), "_", " "))
+	if name == "" {
+		return aiSkillAction{}, false
+	}
+	action := aiSkillAction{Name: aiFlexibleString(name)}
+	switch typed := value.(type) {
+	case bool:
+		if !typed {
+			return aiSkillAction{}, false
+		}
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed != "" {
+			action.Points = aiFlexibleString(trimmed)
+		}
+	case json.Number:
+		action.Points = aiFlexibleString(typed.String())
+	case float64:
+		action.Points = aiFlexibleString(strconv.FormatFloat(typed, 'f', -1, 64))
+	}
+	return action, true
+}
+
+func aiDecodeStateMachineEncodedAttributeAction(key string, value any) (aiAttributeAction, bool) {
+	const prefix = "attributes_"
+	if !strings.HasPrefix(key, prefix) {
+		return aiAttributeAction{}, false
+	}
+	suffix := strings.TrimPrefix(key, prefix)
+	if suffix == "" {
+		return aiAttributeAction{}, false
+	}
+	attributeID := suffix
+	attributeValue := aiStringFromValue(value)
+	if typed, ok := value.(bool); ok {
+		if !typed {
+			return aiAttributeAction{}, false
+		}
+		parts := strings.Split(suffix, "_")
+		if len(parts) >= 2 {
+			attributeValue = parts[len(parts)-1]
+			attributeID = strings.Join(parts[:len(parts)-1], "_")
+		}
+	}
+	attributeID = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(attributeID), "_", ""))
+	attributeValue = strings.TrimSpace(attributeValue)
+	if attributeID == "" || attributeValue == "" {
+		return aiAttributeAction{}, false
+	}
+	return aiAttributeAction{ID: aiFlexibleString(attributeID), Value: aiFlexibleString(attributeValue)}, true
+}
+
+func aiApplyModelSpecificActionPlanAliases(model string, raw map[string]any) map[string]any {
+	if !aiUsesGURPSStateMachineBaselineShim(model) || raw == nil {
+		return raw
+	}
+	if len(raw) == 1 {
+		for key, value := range raw {
+			section := aiMapStringAny(value)
+			if section != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "step_") {
+				raw = section
+			}
+		}
+	}
+	if raw["disadvantages"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedNamedAction(string(aiLibraryCategoryDisadvantage), key, value); ok {
+				actions = append(actions, map[string]any{"name": action.Name.String(), "points": action.Points.String()})
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["disadvantages"] = actions
+		}
+	}
+	if raw["quirks"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedNamedAction(string(aiLibraryCategoryQuirk), key, value); ok {
+				actions = append(actions, map[string]any{"name": action.Name.String(), "points": action.Points.String()})
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["quirks"] = actions
+		}
+	}
+	if raw["advantages"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedNamedAction(string(aiLibraryCategoryAdvantage), key, value); ok {
+				actions = append(actions, map[string]any{"name": action.Name.String(), "points": action.Points.String()})
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["advantages"] = actions
+		}
+	}
+	if raw["equipment"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedNamedAction(string(aiLibraryCategoryEquipment), key, value); ok {
+				item := map[string]any{"name": action.Name.String()}
+				if action.Quantity.Int() > 0 {
+					item["quantity"] = action.Quantity.Int()
+				}
+				if strings.TrimSpace(action.Description.String()) != "" {
+					item["description"] = action.Description.String()
+				}
+				actions = append(actions, item)
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["equipment"] = actions
+		}
+	}
+	if raw["skills"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedSkillAction("skills", key, value); ok {
+				actions = append(actions, map[string]any{"name": action.Name.String(), "points": action.Points.String()})
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["skills"] = actions
+		}
+	}
+	if raw["spells"] == nil {
+		var actions []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedSkillAction("spells", key, value); ok {
+				actions = append(actions, map[string]any{"name": action.Name.String(), "points": action.Points.String()})
+				delete(raw, key)
+			}
+		}
+		if len(actions) != 0 {
+			raw["spells"] = actions
+		}
+	}
+	if raw["attributes"] == nil {
+		var attributes []any
+		for key, value := range raw {
+			if action, ok := aiDecodeStateMachineEncodedAttributeAction(key, value); ok {
+				attributes = append(attributes, map[string]any{"id": action.ID.String(), "value": action.Value.String()})
+				delete(raw, key)
+			}
+		}
+		if len(attributes) != 0 {
+			raw["attributes"] = attributes
+		}
+	}
+	return raw
+}
+
+func aiExtractLocalBaselineResponseMaps(text, model string) []map[string]any {
+	responses := make([]map[string]any, 0, 1)
 	for _, payload := range extractJSONPayloads(text) {
 		cleaned := sanitizeAIJSONPayload(payload)
 		if cleaned == "" {
@@ -1542,6 +1899,34 @@ func aiValidateLocalBaselineCollectionResponseText(text string) error {
 		} else if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
 			continue
 		}
+		aiApplyModelSpecificBaselineDraftProfileAliases(model, raw)
+		responses = append(responses, raw)
+	}
+	return responses
+}
+
+func aiExtractLocalActionPlanResponseMaps(text, model string) []map[string]any {
+	responses := make([]map[string]any, 0, 1)
+	for _, payload := range extractJSONPayloads(text) {
+		cleaned := sanitizeAIJSONPayload(payload)
+		if cleaned == "" {
+			continue
+		}
+		var raw map[string]any
+		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
+			if err := json.Unmarshal(normalized, &raw); err != nil {
+				continue
+			}
+		} else if err := json.Unmarshal([]byte(cleaned), &raw); err != nil {
+			continue
+		}
+		responses = append(responses, aiApplyModelSpecificActionPlanAliases(model, raw))
+	}
+	return responses
+}
+
+func aiValidateLocalBaselineCollectionResponseTextForModel(text, model string) error {
+	for _, raw := range aiExtractLocalBaselineResponseMaps(text, model) {
 		if aiMapStringAny(raw["character_sheet"]) != nil || aiMapStringAny(raw["character_profile"]) != nil {
 			return fmt.Errorf("local baseline collection rejected the model response because it returned a full character-sheet payload instead of draft_profile JSON")
 		}
@@ -1551,15 +1936,19 @@ func aiValidateLocalBaselineCollectionResponseText(text string) error {
 		}
 		unexpectedBuildKeys := aiMatchingDraftProfileKeys(draftProfile, aiBaselineUnexpectedBuildKeys)
 		crossSystemKeys := aiMatchingDraftProfileKeys(draftProfile, aiBaselineCrossSystemKeys)
-		if len(unexpectedBuildKeys) == 0 && len(crossSystemKeys) == 0 {
+		unknownProfileKeys := aiUnknownDraftProfileKeys(draftProfile)
+		if len(unexpectedBuildKeys) == 0 && len(crossSystemKeys) == 0 && len(unknownProfileKeys) == 0 {
 			continue
 		}
-		parts := make([]string, 0, 2)
+		parts := make([]string, 0, 3)
 		if len(unexpectedBuildKeys) != 0 {
 			parts = append(parts, fmt.Sprintf("non-baseline keys: %s", strings.Join(unexpectedBuildKeys, ", ")))
 		}
 		if len(crossSystemKeys) != 0 {
 			parts = append(parts, fmt.Sprintf("cross-system keys: %s", strings.Join(crossSystemKeys, ", ")))
+		}
+		if len(unknownProfileKeys) != 0 {
+			parts = append(parts, fmt.Sprintf("unsupported keys: %s", strings.Join(unknownProfileKeys, ", ")))
 		}
 		return fmt.Errorf("local baseline collection rejected the model response because draft_profile contained %s. The baseline step must return only profile fields such as character_concept, name, title, tech_level, cp_limit, starting_wealth, and world_setting", strings.Join(parts, "; "))
 	}
@@ -1860,38 +2249,35 @@ type aiSkillAction struct {
 }
 
 func (d *aiChatDockable) parseAIActionPlan(text string) (aiActionPlan, bool) {
-	payloads := extractJSONPayloads(text)
+	return d.parseAIActionPlanForModel(text, "")
+}
+
+func (d *aiChatDockable) parseAIActionPlanForModel(text, model string) (aiActionPlan, bool) {
+	payloads := aiExtractLocalActionPlanResponseMaps(text, model)
 	if len(payloads) == 0 {
 		return aiActionPlan{}, false
 	}
 	var merged aiActionPlan
 	found := false
-	for _, payload := range payloads {
-		cleaned := sanitizeAIJSONPayload(payload)
-		if cleaned == "" {
+	for _, rawPayload := range payloads {
+		normalized, err := json.Marshal(rawPayload)
+		if err != nil {
 			continue
 		}
 		var plan aiActionPlan
-		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
-			if err := json.Unmarshal(normalized, &plan); err == nil && hasAIActionPlanContent(plan) {
-				mergeAIActionPlan(&merged, plan)
+		if err := json.Unmarshal(normalized, &plan); err == nil && hasAIActionPlanContent(plan) {
+			mergeAIActionPlan(&merged, plan)
+			found = true
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(normalized, &raw); err == nil {
+			if wrappedPlan, ok := aiActionPlanFromWrapperMap(raw); ok {
+				mergeAIActionPlan(&merged, wrappedPlan)
 				found = true
-				continue
-			}
-			var raw map[string]any
-			if err := json.Unmarshal(normalized, &raw); err == nil {
-				if wrappedPlan, ok := aiActionPlanFromWrapperMap(raw); ok {
-					mergeAIActionPlan(&merged, wrappedPlan)
-					found = true
-				}
 			}
 			continue
 		}
-		if err := json.Unmarshal([]byte(cleaned), &plan); err != nil || !hasAIActionPlanContent(plan) {
-			continue
-		}
-		mergeAIActionPlan(&merged, plan)
-		found = true
 	}
 	return merged, found
 }
@@ -3845,14 +4231,14 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 					unison.InvokeTask(func() { d.addMessage("AI", err.Error()) })
 					return
 				}
-				if validationErr := aiValidateLocalBaselineCollectionResponseText(responseStr); validationErr != nil {
+				if validationErr := aiValidateLocalBaselineCollectionResponseTextForModel(responseStr, model); validationErr != nil {
 					unison.InvokeTask(func() {
 						d.addMessage("AI", responseStr)
 						d.addMessage("AI", validationErr.Error())
 					})
 					return
 				}
-				if response, ok := aiParseLocalBaselineDraftProfileResponse(responseStr); ok {
+				if response, ok := aiParseLocalBaselineDraftProfileResponseForModel(responseStr, model); ok {
 					session.DraftProfile = aiMergeDraftProfile(session.DraftProfile, response.DraftProfile)
 					session.Params = aiDraftProfileToCharacterRequestParams(session.DraftProfile, session.Params)
 					if aiDraftProfileReadyForApproval(response.Status.String(), session.DraftProfile) {
@@ -3894,7 +4280,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 			return
 		}
 
-		resolution, err := d.resolveAIResponseText(responseStr)
+		resolution, err := d.resolveAIResponseTextForModel(responseStr, model)
 		if err != nil {
 			unison.InvokeTask(func() {
 				d.addMessage("AI", responseStr)
@@ -3908,7 +4294,7 @@ func (d *aiChatDockable) queryLocal(prompt string) {
 			if retryErr != nil {
 				resolution.Warnings = append(resolution.Warnings, i18n.Text("Warning: AI follow-up alternatives could not be generated; unresolved items were skipped."))
 			} else if strings.TrimSpace(followUpResponse) != "" {
-				followUpResolution, followUpResolveErr := d.resolveAIResponseText(followUpResponse)
+				followUpResolution, followUpResolveErr := d.resolveAIResponseTextForModel(followUpResponse, model)
 				switch {
 				case followUpResolveErr != nil:
 					resolution.Warnings = append(resolution.Warnings, fmt.Sprintf(i18n.Text("Warning: AI follow-up alternatives could not be resolved: %v"), followUpResolveErr))
@@ -3981,17 +4367,17 @@ type aiLocalBaselineDraftProfileResponse struct {
 }
 
 func aiParseLocalBaselineDraftProfileResponse(text string) (aiLocalBaselineDraftProfileResponse, bool) {
-	for _, payload := range extractJSONPayloads(text) {
-		cleaned := sanitizeAIJSONPayload(payload)
-		if cleaned == "" {
+	return aiParseLocalBaselineDraftProfileResponseForModel(text, "")
+}
+
+func aiParseLocalBaselineDraftProfileResponseForModel(text, model string) (aiLocalBaselineDraftProfileResponse, bool) {
+	for _, raw := range aiExtractLocalBaselineResponseMaps(text, model) {
+		normalized, err := json.Marshal(raw)
+		if err != nil {
 			continue
 		}
 		var response aiLocalBaselineDraftProfileResponse
-		if normalized, ok := aiMarshalNormalizedJSONPayload(cleaned); ok {
-			if err := json.Unmarshal(normalized, &response); err != nil {
-				continue
-			}
-		} else if err := json.Unmarshal([]byte(cleaned), &response); err != nil {
+		if err = json.Unmarshal(normalized, &response); err != nil {
 			continue
 		}
 		response.DraftProfile = aiNormalizeDraftProfile(response.DraftProfile)

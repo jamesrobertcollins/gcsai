@@ -44,7 +44,7 @@ type aiLocalContractCase struct {
 	SystemPrompt string
 	UserPrompt   string
 	Schema       any
-	Validate     func(string) error
+	Validate     func(string, string) error
 }
 
 var (
@@ -80,7 +80,7 @@ func RunLocalAIContractHarness(endpoint, model string) (AILocalContractHarnessRe
 			report.Cases = append(report.Cases, result)
 			continue
 		}
-		if validateErr := contractCase.Validate(response); validateErr != nil {
+		if validateErr := contractCase.Validate(model, response); validateErr != nil {
 			result.Error = validateErr.Error()
 			report.Cases = append(report.Cases, result)
 			continue
@@ -132,7 +132,7 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: blueprintSystemPrompt,
 			UserPrompt:   blueprintUserPrompt,
 			Schema:       aiGenerationBlueprintJSONSchema(),
-			Validate: func(text string) error {
+			Validate: func(_ string, text string) error {
 				_, _, err := aiParseGenerationBlueprintResponse(text, params.TotalCP, params.Concept)
 				return err
 			},
@@ -142,8 +142,8 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: storySystemPrompt,
 			UserPrompt:   storyUserPrompt,
 			Schema:       aiActionPlanJSONSchema(),
-			Validate: func(text string) error {
-				return aiValidateActionPlanContractResponse(text, map[string]bool{"disadvantages": true, "quirks": true})
+			Validate: func(model, text string) error {
+				return aiValidateActionPlanContractResponseForModel(model, text, map[string]bool{"disadvantages": true, "quirks": true})
 			},
 		},
 		{
@@ -151,8 +151,8 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: attributeSystemPrompt,
 			UserPrompt:   attributeUserPrompt,
 			Schema:       aiActionPlanJSONSchema(),
-			Validate: func(text string) error {
-				return aiValidateActionPlanContractResponse(text, map[string]bool{"attributes": true})
+			Validate: func(model, text string) error {
+				return aiValidateActionPlanContractResponseForModel(model, text, map[string]bool{"attributes": true})
 			},
 		},
 		{
@@ -160,8 +160,8 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: advantageSystemPrompt,
 			UserPrompt:   advantageUserPrompt,
 			Schema:       aiActionPlanJSONSchema(),
-			Validate: func(text string) error {
-				return aiValidateActionPlanContractResponse(text, map[string]bool{"advantages": true})
+			Validate: func(model, text string) error {
+				return aiValidateActionPlanContractResponseForModel(model, text, map[string]bool{"advantages": true})
 			},
 		},
 		{
@@ -169,8 +169,8 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: skillsSystemPrompt,
 			UserPrompt:   skillsUserPrompt,
 			Schema:       aiActionPlanJSONSchema(),
-			Validate: func(text string) error {
-				return aiValidateActionPlanContractResponse(text, map[string]bool{"skills": true, "spells": true})
+			Validate: func(model, text string) error {
+				return aiValidateActionPlanContractResponseForModel(model, text, map[string]bool{"skills": true, "spells": true})
 			},
 		},
 		{
@@ -178,18 +178,18 @@ func aiBuildLocalContractCases() []aiLocalContractCase {
 			SystemPrompt: equipmentSystemPrompt,
 			UserPrompt:   equipmentUserPrompt,
 			Schema:       aiActionPlanJSONSchema(),
-			Validate: func(text string) error {
-				return aiValidateActionPlanContractResponse(text, map[string]bool{"equipment": true})
+			Validate: func(model, text string) error {
+				return aiValidateActionPlanContractResponseForModel(model, text, map[string]bool{"equipment": true})
 			},
 		},
 	}
 }
 
-func aiValidateBaselineContractResponse(text string) error {
-	if err := aiValidateLocalBaselineCollectionResponseText(text); err != nil {
+func aiValidateBaselineContractResponse(model, text string) error {
+	if err := aiValidateLocalBaselineCollectionResponseTextForModel(text, model); err != nil {
 		return err
 	}
-	response, ok := aiParseLocalBaselineDraftProfileResponse(text)
+	response, ok := aiParseLocalBaselineDraftProfileResponseForModel(text, model)
 	if !ok {
 		return fmt.Errorf("baseline contract response did not parse as draft_profile JSON")
 	}
@@ -204,8 +204,12 @@ func aiValidateBaselineContractResponse(text string) error {
 }
 
 func aiValidateActionPlanContractResponse(text string, allowed map[string]bool) error {
+	return aiValidateActionPlanContractResponseForModel("", text, allowed)
+}
+
+func aiValidateActionPlanContractResponseForModel(model, text string, allowed map[string]bool) error {
 	var dockable aiChatDockable
-	plan, ok := dockable.parseAIActionPlan(text)
+	plan, ok := dockable.parseAIActionPlanForModel(text, model)
 	if !ok {
 		return fmt.Errorf("response did not parse as a character-sheet action plan")
 	}

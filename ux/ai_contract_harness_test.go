@@ -122,3 +122,13 @@ func TestAIValidateActionPlanContractResponseRequiresResolverSuccess(t *testing.
 		t.Fatalf("expected resolver validation error, got %q", err.Error())
 	}
 }
+
+func TestAIValidateBaselineContractResponseUsesStateMachineAliasShimOnlyForTargetModel(t *testing.T) {
+	response := `{"status":"complete","draft_profile":{"character_concept":"modern assassin","name_of_player_character":"Wong Jick","tech_level_of_game_world":8,"cp_limit_of_player_character":150,"starting_wealth_of_player_character":"$20,000"}}`
+	if err := aiValidateBaselineContractResponse("gurps-state-machine:latest", response); err != nil {
+		t.Fatalf("expected gurps-state-machine alias shim to accept baseline response, got %v", err)
+	}
+	if err := aiValidateBaselineContractResponse("llama-3.1", response); err == nil {
+		t.Fatal("expected non-target model to reject unsupported baseline aliases")
+	}
+}

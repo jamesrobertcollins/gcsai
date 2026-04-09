@@ -173,7 +173,11 @@ func (d *aiChatDockable) resolveAIActionPlanResult(plan aiActionPlan) (aiPlanRes
 }
 
 func (d *aiChatDockable) resolveAIResponseText(responseText string) (aiPlanResolutionResult, error) {
-	plan, ok := d.parseAIActionPlan(responseText)
+	return d.resolveAIResponseTextForModel(responseText, "")
+}
+
+func (d *aiChatDockable) resolveAIResponseTextForModel(responseText, model string) (aiPlanResolutionResult, error) {
+	plan, ok := d.parseAIActionPlanForModel(responseText, model)
 	if !ok {
 		return aiPlanResolutionResult{Parsed: false}, nil
 	}

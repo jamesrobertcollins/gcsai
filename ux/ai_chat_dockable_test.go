@@ -114,6 +114,101 @@ func TestAIValidateLocalBaselineCollectionResponseTextRejectsCrossSystemDraftPro
 	}
 }
 
+func TestAIValidateLocalBaselineCollectionResponseTextRejectsUnsupportedBaselineAliases(t *testing.T) {
+	responseText := `{"status":"complete","draft_profile":{"character_concept":"modern assassin","name_of_player_character":"Wong Jick","title_of_player_character":"Assassin","tech_level_of_game_world":8,"cp_limit_of_player_character":150,"starting_wealth_of_player_character":"$20,000"}}`
+	err := aiValidateLocalBaselineCollectionResponseText(responseText)
+	if err == nil {
+		t.Fatal("expected unsupported baseline aliases to be rejected")
+	}
+	message := err.Error()
+	checks := []string{"unsupported keys", "name_of_player_character", "tech_level_of_game_world", "cp_limit_of_player_character", "starting_wealth_of_player_character"}
+	for _, check := range checks {
+		if !strings.Contains(message, check) {
+			t.Fatalf("expected validation error to mention %q, got %q", check, message)
+		}
+	}
+}
+
+func TestAIParseLocalBaselineDraftProfileResponseForModelUsesStateMachineAliasShim(t *testing.T) {
+	responseText := `{"status":"complete","draft_profile":{"character_concept":"modern assassin","name_of_player_character":"Wong Jick","title_of_player_character":"Assassin","tech_level_of_game_world":8,"cp_limit_of_player_character":150,"starting_wealth_of_player_character":"$20,000"}}`
+	response, ok := aiParseLocalBaselineDraftProfileResponseForModel(responseText, "gurps-state-machine:latest")
+	if !ok {
+		t.Fatal("expected gurps-state-machine parser shim to parse aliased baseline response")
+	}
+	if response.DraftProfile.Name.String() != "Wong Jick" {
+		t.Fatalf("expected name to be normalized, got %q", response.DraftProfile.Name.String())
+	}
+	if response.DraftProfile.TechLevel.String() != "8" {
+		t.Fatalf("expected tech level 8, got %q", response.DraftProfile.TechLevel.String())
+	}
+	if response.DraftProfile.CPLimit.String() != "150" {
+		t.Fatalf("expected cp limit 150, got %q", response.DraftProfile.CPLimit.String())
+	}
+	if response.DraftProfile.StartingWealth.String() != "$20,000" {
+		t.Fatalf("expected starting wealth to be normalized, got %q", response.DraftProfile.StartingWealth.String())
+	}
+	response, ok = aiParseLocalBaselineDraftProfileResponseForModel(responseText, "llama-3.1")
+	if !ok {
+		t.Fatal("expected non-target model parser to still read the canonical character_concept")
+	}
+	if response.DraftProfile.Name.String() != "" || response.DraftProfile.TechLevel.String() != "" || response.DraftProfile.CPLimit.String() != "" {
+		t.Fatalf("expected non-target model parser to leave aliased fields unmapped, got %#v", response.DraftProfile)
+	}
+}
+
+func TestAIParseLocalBaselineDraftProfileResponseForModelDecodesStateMachineValueInKeyPattern(t *testing.T) {
+	responseText := `{"status":"complete","draft_profile":{"character_concept":"modern assassin","name":"Wong Jick","title":"Assassin","age_blank":true,"hair_color_black":true,"tech_level_8":true,"cp_limit_150":true,"starting_wealth_1000":"$1,000"}}`
+	response, ok := aiParseLocalBaselineDraftProfileResponseForModel(responseText, "gurps-state-machine:latest")
+	if !ok {
+		t.Fatal("expected gurps-state-machine parser shim to decode value-in-key baseline response")
+	}
+	if response.DraftProfile.HairColor.String() != "black" {
+		t.Fatalf("expected hair color to be decoded, got %q", response.DraftProfile.HairColor.String())
+	}
+	if response.DraftProfile.TechLevel.String() != "8" {
+		t.Fatalf("expected tech level 8, got %q", response.DraftProfile.TechLevel.String())
+	}
+	if response.DraftProfile.CPLimit.String() != "150" {
+		t.Fatalf("expected cp limit 150, got %q", response.DraftProfile.CPLimit.String())
+	}
+	if response.DraftProfile.StartingWealth.String() != "$1,000" {
+		t.Fatalf("expected starting wealth to be decoded, got %q", response.DraftProfile.StartingWealth.String())
+	}
+	if response.DraftProfile.Age.String() != "" {
+		t.Fatalf("expected blank age to decode to empty string, got %q", response.DraftProfile.Age.String())
+	}
+}
+
+func TestAIParseAIActionPlanForModelDecodesStateMachineStoryWrapper(t *testing.T) {
+	var d aiChatDockable
+	responseText := `{"step_2_story_engine":{"disadvantages_bloodlust":"-10","quirks_always_sharpens_blades":"-1"}}`
+	plan, ok := d.parseAIActionPlanForModel(responseText, "gurps-state-machine:latest")
+	if !ok {
+		t.Fatal("expected gurps-state-machine parser to decode wrapped story response")
+	}
+	if len(plan.Disadvantages) != 1 || plan.Disadvantages[0].Name.String() != "bloodlust" {
+		t.Fatalf("expected wrapped disadvantage to decode, got %#v", plan.Disadvantages)
+	}
+	if len(plan.Quirks) != 1 || plan.Quirks[0].Name.String() != "always sharpens blades" {
+		t.Fatalf("expected wrapped quirk to decode, got %#v", plan.Quirks)
+	}
+	if _, ok = d.parseAIActionPlanForModel(responseText, "llama-3.1"); ok {
+		t.Fatal("expected non-target model parser to ignore wrapped story response")
+	}
+}
+
+func TestAIParseAIActionPlanForModelDecodesStateMachineAttributeKeys(t *testing.T) {
+	var d aiChatDockable
+	responseText := `{"attributes_dx_14":true,"attributes_iq_12":true}`
+	plan, ok := d.parseAIActionPlanForModel(responseText, "gurps-state-machine:latest")
+	if !ok {
+		t.Fatal("expected gurps-state-machine parser to decode encoded attribute response")
+	}
+	if len(plan.Attributes) != 2 {
+		t.Fatalf("expected two decoded attributes, got %#v", plan.Attributes)
+	}
+}
+
 func TestAIValidateLocalBaselineCollectionResponseTextRejectsCharacterSheetPayload(t *testing.T) {
 	responseText := `{"status":"complete","character_sheet":{"name":"Wong Jick","attributes":{"ST":11}}}`
 	err := aiValidateLocalBaselineCollectionResponseText(responseText)
